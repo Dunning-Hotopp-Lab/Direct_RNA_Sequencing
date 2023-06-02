@@ -98,7 +98,6 @@ def main():
 def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
     # NOTE: From my understanding, each "region" interval is only on a single strand
     orientation = reads_df["strand"].unique().tolist()[0]
-    #forward_genes = True if orientation == "+" else False  ### FOR PLOTS
 
     # These should also have just one unique val too
     region_index = reads_df["region"].unique().tolist()[0]
@@ -207,9 +206,7 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
     #print("POSSIBLE TRANSCRIPTS DF")
     #print(possible_transcripts_df)
 
-    ### PLOT SLOPE DF USING TRANSCRIPT REAL START/END AS X-INTERCEPTS  (TODO: )
-
-    # Generate each individual transcript depth plot and model them with domains
+    # Generate each individual transcript depth and model them with domains
     reads_shinking_df = reads_df.copy()
     depth_subtranscripts_df = pd.DataFrame(total_range_s, columns=["rel_position"])
     linear_models_df = pd.DataFrame(columns=["id", "a", "b", "dstart", "dend"])
