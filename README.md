@@ -2,7 +2,8 @@
 
 ## RDOperon
 
-Currently tested with Python 3.11.3
+Python 3.8 and later are supported. This was tested using Python 3.11.3
+
 
 You can install the required dependencies by running `python3 -m pip install -r requirements.txt`
 
@@ -21,6 +22,8 @@ options:
                         Specific check on a chromsome ID. If not provided, will loop over all chromosomes
   -b NUM_BINS, --num_bins NUM_BINS
                         Set number of total bins per region.
+  -o OUTPUT_FILE, --output_file OUTPUT_FILE
+                        Name of the output file to save results to.
 
 --reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)
 --ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)

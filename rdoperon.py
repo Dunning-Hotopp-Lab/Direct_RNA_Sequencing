@@ -33,6 +33,7 @@ def main():
     parser.add_argument('-c', '--chromosome', type=str, required=False, help='Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
     #parser.add_argument('-n', '--region_number', type=int, required=False, help='Specific check on a region index ID. If not provided, will loop over all regions')
     parser.add_argument('-b', "--num_bins", type=int, default=100, required=False, help="Set number of total bins per region.")
+    parser.add_argument('-o', "--output_file", type=str, required=False, help="Name of the output file to save results to.")
     args = parser.parse_args()
 
     distinct_ranges = args.ranges_bed
@@ -91,8 +92,12 @@ def main():
         #print(f"TIME {elapsed_time}")
         #print("---")
 
+    output_file = "all_transcripts.bed"
+    if args.output_file:
+        output_file = args.output_file
+
     transcript_df = transcript_df.sort_values(by="start")
-    transcript_df.to_csv("all_transcripts.bed", sep="\t", index=False, header=False)
+    transcript_df.to_csv(output_file, sep="\t", index=False, header=False)
 
 
 def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
