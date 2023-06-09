@@ -20,6 +20,10 @@ options:
                         Path to a BED file of distict non-overlapping interval ranges per strand
   -c CHROMOSOME, --chromosome CHROMOSOME
                         Specific check on a chromsome ID. If not provided, will loop over all chromosomes
+  --min_depth MIN_DEPTH
+                        Minimum required depth for a distinct region to find candidate transcripts.
+  --max_depth MAX_DEPTH
+                        Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
   -b NUM_BINS, --num_bins NUM_BINS
                         Set number of total bins per region.
   -o OUTPUT_FILE, --output_file OUTPUT_FILE

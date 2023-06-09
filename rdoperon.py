@@ -11,8 +11,8 @@ import argparse
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
+from math import ceil
 from itertools import product
-
 import time
 
 TRANSCRIPT_COLS = ["chr","start","end","name","score","strand"]
@@ -31,16 +31,18 @@ def main():
     parser.add_argument('-r', '--reads_bed', type=str, required=True, help='Path to a position-sorted BED file of reads.')
     parser.add_argument('-d', '--ranges_bed', type=str, required=True, help="Path to a BED file of distict non-overlapping interval ranges per strand")
     parser.add_argument('-c', '--chromosome', type=str, required=False, help='Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
-    #parser.add_argument('-n', '--region_number', type=int, required=False, help='Specific check on a region index ID. If not provided, will loop over all regions')
+    parser.add_argument('--min_depth', type=int, default=0, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
+    parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
+    parser.add_argument('--min_normalized_slope', type=float, default=0.5, help='Minimum normalized depth threshold for deteremining start and stop bin candidiates.')
     parser.add_argument('-b', "--num_bins", type=int, default=100, required=False, help="Set number of total bins per region.")
-    parser.add_argument('-o', "--output_file", type=str, required=False, help="Name of the output file to save results to.")
+    parser.add_argument('-o', "--output_file", type=str, default="all_transcripts.bed", required=False, help="Name of the output file to save results to.")
     args = parser.parse_args()
 
     distinct_ranges = args.ranges_bed
     dr_cols = ["chr","start","end", "strand"]
     distinct_ranges_df = pd.read_csv(distinct_ranges, sep="\t", header=None, names=dr_cols, usecols=[0,1,2,3])
     distinct_ranges_df = distinct_ranges_df.sort_values(by=["strand", "start"]).reset_index(drop=True)
-    distinct_ranges_df["width"] = distinct_ranges_df["end"] - distinct_ranges_df["start"]
+    distinct_ranges_df["width"] = distinct_ranges_df["end"]+1 - distinct_ranges_df["start"] # inclusive
     distinct_ranges_df["region"] = distinct_ranges_df.index
 
     reads_file = args.reads_bed
@@ -49,17 +51,13 @@ def main():
 
     transcript_df = pd.DataFrame(columns=TRANSCRIPT_COLS)
 
-    #t = time.process_time()
     # Process each usable region
-    #reads_grouped = reads_df.groupby(["chr", "region"])
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"])
     for name, subread_ranges_df in read_ranges_grouped:
+
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
-
-        #if args.region_number and not name[1] == args.region_number:
-        #    continue
 
         # Filter only the reads that belong to this region.
         if len(subread_ranges_df) > 1:
@@ -67,40 +65,29 @@ def main():
 
         subread_ranges_s = subread_ranges_df.squeeze()
         subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
-        if subreads_df.empty:
-            print(f"skipping region {name} because no reads could be mapped to this region")
+
+        if len(subreads_df) < args.min_depth:
+            print(f"skipping region {name} because depth is under the min threshold of {args.min_depth}.")
             continue
-        subreads_df["region"] = name[1]
 
         # Get ranges with valid depth (filter out ribosomes with high depth)
-        if len(subreads_df) > 25000:
-            print(f"skipping region {name} because depth is over 25000, suggesting ribosomes")
+        if args.max_depth and len(subreads_df) > args.max_depth:
+            print(f"skipping region {name} because depth is over the max threshold of {args.max_depth}")
             continue
 
-        #subreads_df = reads_grouped.get_group(name)
+        subreads_df["region"] = name[1]
         #print(f"REGION {name}")
 
         bin_width = subread_ranges_s["width"] / args.num_bins
 
-        region_transcript_df = predict_region(subreads_df, bin_width, args.num_bins)
+        region_transcript_df = predict_region(subreads_df, bin_width, args.num_bins, args.min_normalized_slope)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
 
-        #region_transcript_df = region_transcript_df.sort_values(by="start")
-        #region_transcript_df.to_csv(f"outputs/{name[0]}_region_{name[1]}_transcripts.tsv", sep="\t", index=False)
-
-        #elapsed_time = round(time.process_time() - t, 2)
-        #print(f"TIME {elapsed_time}")
-        #print("---")
-
-    output_file = "all_transcripts.bed"
-    if args.output_file:
-        output_file = args.output_file
-
     transcript_df = transcript_df.sort_values(by="start")
-    transcript_df.to_csv(output_file, sep="\t", index=False, header=False)
+    transcript_df.to_csv(args.output_file, sep="\t", index=False, header=False)
 
 
-def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
+def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_normalized_slope:float):
     # NOTE: From my understanding, each "region" interval is only on a single strand
     orientation = reads_df["strand"].unique().tolist()[0]
 
@@ -128,8 +115,8 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
 
     # Calculate bin categories
     tstart = reads_df["start"].min()
-    tend = int(reads_df["end"].max() + bin_width)
-    total_range_s = pd.Series(list(range(tstart, tend)))
+    tend = (reads_df["end"].max() + ceil(bin_width))
+    total_range_s = pd.Series(list(range(tstart, tend+1)))
     # NOTE: The original R script actually ended up with one more bin when "findIntervals" was run.
     # I think the idea was to have one extra bin for the extra rollover to "tend"
     bin_labels = pd.cut(total_range_s, bins=num_bins+1, right=False, labels=False)
@@ -160,14 +147,15 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
     #print(bin_slope_df)
 
     # Filter slopes that are greater than the threshold "factor"
-    factor = max(bin_slope_df["sum_norm_slope"].abs().max()/20,0.5)
+    factor = max(bin_slope_df["sum_norm_slope"].abs().max()/20, min_normalized_slope)
     filter_slope_mask = bin_slope_df["sum_norm_slope"].abs() > factor
     filtered_bin_slope_df = bin_slope_df[filter_slope_mask].copy()  # avoids SettingWithCopyWarning
 
     # If any bin intervals pass filter, determine number of slope inversions
     if not filtered_bin_slope_df.empty:
         filtered_bin_slope_df["sign"] = 1 # number of slope changes
-        is_positive = True
+
+        is_positive = True if filtered_bin_slope_df.iloc[0]["sum_norm_slope"] >= 0 else False
         current_sign_count = 1
         # ? Can we optimize this
         for row in filtered_bin_slope_df.itertuples():
@@ -184,16 +172,14 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
         # Prepate to take second derivative of depth changes
         if len(filtered_bin_slope_df["sign"].unique()) == 1:
             # "groupby" returns a Series instead of a DataFrame if only one group present.
-            filtered_bin_slope_df["norm_range_sum"] = filtered_bin_slope_df["sum_norm_slope"].abs() / filtered_bin_slope_df["sum_norm_slope"].abs().max()
+            filtered_bin_slope_df["norm_range_sum"] = calc_norm_range_sum(filtered_bin_slope_df)
         else:
             filtered_bin_slope_df["norm_range_sum"] = filtered_bin_slope_df.groupby("sign", group_keys=False) \
                 .apply(calc_norm_range_sum)
 
-        #print("FILTERED_BIN_SLOPE_DF")
-        #print(filtered_bin_slope_df)
 
         #Now have a list of start and stop candidate bins by looking at their 1st and 2nd derivative values
-        norm_range_mask = filtered_bin_slope_df["norm_range_sum"] > 0.5
+        norm_range_mask = filtered_bin_slope_df["norm_range_sum"] > min_normalized_slope
         start_candidate_mask = (filtered_bin_slope_df["sum_norm_slope"] > 0) & (norm_range_mask)
         stop_candidate_mask = (filtered_bin_slope_df["sum_norm_slope"] < 0) & (norm_range_mask)
         start_candidates = filtered_bin_slope_df[start_candidate_mask]["bin"].unique().tolist()
@@ -201,6 +187,7 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
 
         start_site_bins.update(start_candidates if orientation == "+" else stop_candidates)
         stop_site_bins.update(stop_candidates if orientation == "+" else start_candidates)
+
 
     # Determine candidate transcripts using every combination of start/stop bins
     cartesian_site_bins = list(product(start_site_bins, stop_site_bins))
@@ -233,6 +220,12 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
         if depth_reads_df.empty:
             # No interior reads present for transcript
             continue
+
+        # TODO: Occasionally get PerformanceWarning here because of lots of transcripts I guess
+        """
+        PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.
+        Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+        """
         depth_subtranscripts_df[transcript_id] = get_raw_depth(depth_reads_df)
 
         # Filter regions where the bases are within the real start and end boundaries
@@ -308,11 +301,11 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int):
         best_transcript = indiv_assessment_frame_df.iloc[0]["id"]
         best_leftover_transcript_s = linear_models_leftover_df[linear_models_leftover_df["id"] == best_transcript].squeeze()
 
-        # ? Can we keep best remaining prediction that didn't pass from the previous run so we don't have to run here
         predicted_frame_df = predict_linear_domain(best_leftover_transcript_s, tstart, tend)
         normalize_linear_domain_depth(depth_frame_df, predicted_frame_df)
         depth_frame_df["depth"] = predicted_frame_df["predicted_depth"]
 
+        # ? Add score as well for outputting
         final_transcripts.add(best_transcript)
         linear_models_leftover_df = linear_models_leftover_df[~(linear_models_leftover_df["id"] == best_transcript)]
         # If no more transcript candidates are left to process, break
