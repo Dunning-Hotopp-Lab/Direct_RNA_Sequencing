@@ -54,6 +54,9 @@ def main():
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"])
     for name, subread_ranges_df in read_ranges_grouped:
+        #if not name[1] == 1053:
+        #if not name[1] == 0:
+        #    continue
 
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
@@ -67,12 +70,12 @@ def main():
         subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
 
         if len(subreads_df) < args.min_depth:
-            print(f"skipping region {name} because depth is under the min threshold of {args.min_depth}.")
+            print(f"Skipping region {name} because depth is under the min threshold of {args.min_depth}.")
             continue
 
         # Get ranges with valid depth (filter out ribosomes with high depth)
         if args.max_depth and len(subreads_df) > args.max_depth:
-            print(f"skipping region {name} because depth is over the max threshold of {args.max_depth}")
+            print(f"Skipping region {name} because depth is over the max threshold of {args.max_depth}")
             continue
 
         subreads_df["region"] = name[1]
@@ -177,7 +180,6 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_nor
             filtered_bin_slope_df["norm_range_sum"] = filtered_bin_slope_df.groupby("sign", group_keys=False) \
                 .apply(calc_norm_range_sum)
 
-
         #Now have a list of start and stop candidate bins by looking at their 1st and 2nd derivative values
         norm_range_mask = filtered_bin_slope_df["norm_range_sum"] > min_normalized_slope
         start_candidate_mask = (filtered_bin_slope_df["sum_norm_slope"] > 0) & (norm_range_mask)
@@ -195,8 +197,15 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_nor
     data = [{"id": index, "start": bins[0], "end":bins[1]} for index, bins in enumerate(cartesian_site_bins)]
     possible_transcripts_df = create_possible_transcripts_df(reads_df, orientation, bin_width, data)
 
+    # NOTE: possible_transcripts_df has starts larger than ends if on negative strand.
+
     #print("POSSIBLE TRANSCRIPTS DF")
     #print(possible_transcripts_df)
+
+    #print(sorted(start_site_bins))
+    #print(len(list(start_site_bins)))
+    #print(sorted(stop_site_bins))
+    #print(len(list(stop_site_bins)))
 
     # Generate each individual transcript depth and model them with domains
     reads_shinking_df = reads_df.copy()
@@ -208,7 +217,7 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_nor
     for row in possible_transcripts_df.itertuples():
         transcript_id = "T_{}".format(str(row.id))
         # Interior reads fall within the real start and end of a given transcript candidate
-        interior_reads_mask = (reads_shinking_df["start"] <= row.real_start) & (reads_shinking_df["end"] >= row.real_end + bin_width)
+        interior_reads_mask = (reads_shinking_df["start"] >= row.real_end) & (reads_shinking_df["end"] <= row.real_start + bin_width)
         if orientation == "+":
             interior_reads_mask = (reads_shinking_df["start"] >= row.real_start) & (reads_shinking_df["end"] <= row.real_end + bin_width)
         interior_reads_df = reads_shinking_df[interior_reads_mask]
@@ -253,7 +262,7 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_nor
         linear_models_df.loc[row.Index, "id"] = int(row.id)
         linear_models_df.loc[row.Index, "a"] = model.coef_[0]
         linear_models_df.loc[row.Index, "b"] = model.intercept_
-        linear_models_df.loc[row.Index, "dstart"] = row.real_start
+        linear_models_df.loc[row.Index, "dstart"] = row.real_start  # start larger than end if negative strand
         linear_models_df.loc[row.Index, "dend"] = row.real_end
 
     #print("LINEAR MODELS DF")
