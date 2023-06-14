@@ -88,13 +88,13 @@ def main():
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
 
-    output_file = args.output_file
+    output_prefix = args.output_prefix
     transcript_df = transcript_df.sort_values(by="start")
-    transcript_df.to_csv(f"{output_file}.bed", sep="\t", index=False, header=False)
+    transcript_df.to_csv(f"{output_prefix}.bed", sep="\t", index=False, header=False)
 
     annotation_df = annotation_df.sort_values(by="start")
-    annotation_df.to_csv(f"{output_file}.gff3", sep="\t", index=False, header=False)
-    prepend_gff_version(f"{output_file}.gff3")
+    annotation_df.to_csv(f"{output_prefix}.gff3", sep="\t", index=False, header=False)
+    prepend_gff_version(f"{output_prefix}.gff3")
     exit()
 
 def prepend_gff_version(filename):
