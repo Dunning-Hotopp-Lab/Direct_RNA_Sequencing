@@ -24,13 +24,16 @@ options:
                         Minimum required depth for a distinct region to find candidate transcripts.
   --max_depth MAX_DEPTH
                         Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
+  --min_normalized_slope MIN_NORMALIZED_SLOPE
+                        Minimum normalized depth threshold for deteremining start and stop bin candidiates.
   -b NUM_BINS, --num_bins NUM_BINS
                         Set number of total bins per region.
-  -o OUTPUT_FILE, --output_file OUTPUT_FILE
-                        Name of the output file to save results to.
+  -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
+                        Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
+  -v, --verbose         If enabled, print detailed step progress.
 
 --reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)
 --ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)
 
-Output file is a 6-column BED file of all candidate alternative transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)
+The first output file is a 6-column BED file of all candidate alternative transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)The second output file is a 9-column GFF3 file of the same contents from the BED file. The 'score' column is the normalized score from predicting the best transcripts for a region.
 ```
