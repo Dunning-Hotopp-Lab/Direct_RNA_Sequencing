@@ -355,7 +355,7 @@ def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_nor
         gff_s["type"] = "transcript"
         gff_s["start"] = start + 1  # GFF3 are 1-indexed
         gff_s["end"] = end  # inclusive
-        gff_s["score"] = final_transcripts[row.Index]
+        gff_s["score"] = round(final_transcripts[row.Index], 2)
         gff_s["strand"] = orientation
         gff_s["phase"] = "."
         gff_s["attributes"] = f"ID={operon_name}"
