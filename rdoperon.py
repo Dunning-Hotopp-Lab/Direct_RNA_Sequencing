@@ -102,7 +102,7 @@ def prepend_gff_version(filename):
     with open(filename, 'r+') as f:
         content = f.read()
         f.seek(0, 0)
-        f.write("##gff-version 3")
+        f.write("##gff-version 3\n")
 
 def predict_region(reads_df:pd.DataFrame, bin_width:float, num_bins:int, min_normalized_slope:float, verbose:bool):
     # NOTE: From my understanding, each "region" interval is only on a single strand
