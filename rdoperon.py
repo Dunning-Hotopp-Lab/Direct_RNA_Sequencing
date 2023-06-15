@@ -173,15 +173,15 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
     neg_direction_mask = slope_df["norm_derivative"] < 0
     slope_df["direction"] = 0
     slope_df.loc[pos_direction_mask, "direction"] = 1
-    slope_df.loc[neg_direction_mask, "direction"] = 11
+    slope_df.loc[neg_direction_mask, "direction"] = -1
     std_pos = slope_df.loc[pos_direction_mask, "norm_derivative"].std(skipna=True)
     std_neg = slope_df.loc[neg_direction_mask, "norm_derivative"].std(skipna=True)
 
     # Filter by whatever excceds + and - standard deviation cutoff
     std_pos_filter = std_pos * num_stdev
     std_pos_filter_mask = slope_df["norm_derivative"] > std_pos_filter
-    std_neg_filter = std_neg * num_stdev
-    std_neg_filter_mask = slope_df["norm_derivative"] > std_neg_filter
+    std_neg_filter = std_neg * -num_stdev
+    std_neg_filter_mask = slope_df["norm_derivative"] < std_neg_filter
 
     filtered_slope_df = slope_df[(std_pos_filter_mask) | (std_neg_filter_mask)]
 
@@ -190,7 +190,7 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
     end_sites = {range_end}
 
     start_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == 1, "rel_position"].unique())
-    end_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == 11, "rel_position"].unique())
+    end_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == -1, "rel_position"].unique())
 
     # Bin start and end sites to eliminate closely-grouped positions
     sorted_starts = np.array(sorted(start_sites))
