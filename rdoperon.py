@@ -199,7 +199,6 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
     final_ends = set()
 
     for pos in range(min(sorted_starts), max(sorted_starts)+1, BIN_SIZE):
-        print(pos)
         bin_starts = sorted_starts[(pos <= sorted_starts) & (sorted_starts <= pos+BIN_SIZE)]
         if len(bin_starts):
             final_starts.add(np.min(bin_starts))
