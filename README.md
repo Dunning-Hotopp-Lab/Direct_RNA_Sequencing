@@ -24,10 +24,8 @@ options:
                         Minimum required depth for a distinct region to find candidate transcripts.
   --max_depth MAX_DEPTH
                         Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
-  --min_normalized_slope MIN_NORMALIZED_SLOPE
-                        Minimum normalized depth threshold for deteremining start and stop bin candidiates.
-  -b NUM_BINS, --num_bins NUM_BINS
-                        Set number of total bins per region.
+  --num_stdev NUM_STDEV
+                        Set the number of standard deviations to filter potential start and stop sites.
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
                         Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
   -v, --verbose         If enabled, print detailed step progress.
