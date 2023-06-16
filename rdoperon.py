@@ -499,9 +499,6 @@ def predict_linear_domain(transcript_s, total_range_s):
     depth_frame_df.loc[depth_frame_df["in_range"], "depth"] = (in_range_df["rel_position"] * transcript_s.a) + transcript_s.b
     return depth_frame_df
 
-def is_in_range(pos, start, end):
-    """True if base position is in range, False otherwise."""
-    return start <= pos < end
 
 if __name__ == '__main__':
     main()
