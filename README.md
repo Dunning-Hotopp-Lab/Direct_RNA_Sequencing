@@ -4,8 +4,21 @@
 
 Python 3.8 and later are supported. This was tested using Python 3.11.3
 
+### Installation
+
+#### Route 1 - pip
 
 You can install the required dependencies by running `python3 -m pip install -r requirements.txt`
+
+#### Route 2 - Docker
+
+You can also use the provided Dockerfile to build a Docker image to run the tool in. To build the Docker image, run `docker build -t rdoperon .`
+
+### Running the tool
+
+The general command is `python3 rdoperon.py <options>`
+
+If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app rdoperon <options>`
 
 ```text
 usage: rdoperon.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [-b NUM_BINS]
