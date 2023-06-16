@@ -197,7 +197,6 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
         and possible_transcripts_df.iloc[0]["end"] == range_end:
             # if there is only one transcript and it spans the region, just use the region depth
             # since all reads were assigned to this region already
-            print(f"Only one transcript at region {region_index}")
             transcript_id = "T_{}".format(possible_transcripts_df.iloc[0]["id"])
             depth_subtranscripts_df = pd.DataFrame(total_range_s, columns=["rel_position"])
             depth_subtranscripts_df[transcript_id] = depth_df["raw_depth"]
@@ -218,7 +217,7 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
 
     # Apply the linear model iteratively until a convergence happens, taking the best transcript at each step
     # Output key - transcript, value - normalized error score
-    final_transcripts_dict = find_best_transcripts(linear_models_df, raw_depth_s, range_start, range_end)
+    final_transcripts_dict = find_best_transcripts(linear_models_df, raw_depth_s, total_range_s)
 
     if verbose:
         print("\t- Finalizing transcript list")
@@ -270,30 +269,37 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s
         # Shrink the list of remaining reads
         reads_shinking_df = reads_shinking_df[~(reads_shinking_df["name"].isin(interior_reads_df["name"]))]
 
-        # Calculate base depth just among interior reads for a transcript
-        depth_reads_df = pd.merge(depth_subtranscripts_df[["rel_position"]], interior_reads_df[["start", "end"]], how="cross")
-        if depth_reads_df.empty:
-            # No interior reads assigned to this transcript
+        # No interior reads assigned to this transcript
+        if interior_reads_df.empty:
             continue
+
+        # Calculate base depth just among interior reads for a transcript
+
+        # SLOW VERSION BUT USES LESS MEMORY
+        #raw_depth_list = [len(interior_reads_df[(interior_reads_df["start"] <= pos) & (pos < interior_reads_df["end"])]) for pos in depth_subtranscripts_df["rel_position"].to_list()]
+        #depth_subtranscripts_dict[transcript_id] = pd.Series(raw_depth_list)
+
+        # FAST VERSION BUT CAN BE MEMORY-INTENSIVE
+        depth_reads_df = pd.merge(depth_subtranscripts_df[["rel_position"]], interior_reads_df[["start", "end"]], how="cross")
         depth_subtranscripts_dict[transcript_id] = pd.Series(get_raw_depth(depth_reads_df))
+
 
     temp_df = pd.DataFrame(data=depth_subtranscripts_dict.values(), index=depth_subtranscripts_dict.keys()).transpose()
     depth_subtranscripts_df = pd.concat([depth_subtranscripts_df, temp_df], axis="columns")
     return depth_subtranscripts_df
 
-def find_best_transcripts(linear_models_df, raw_depth_s, range_start, range_end):
+def find_best_transcripts(linear_models_df, raw_depth_s, total_range_s):
+    """Add each linear model stepwise until additions of the linear models do not improve the score."""
     # Initial condition of linear model
     linear_models_leftover_df = linear_models_df.copy()
-    total_range_s = pd.Series(list(range(range_start, range_end)))
     depth_frame_df = pd.DataFrame(total_range_s, columns=["pos"])
     depth_frame_df["depth"] = 0
     depth_frame_df["actual_depth"] = raw_depth_s
 
     final_transcripts = dict()
 
-    ### Add each linear model stepwise until additions of the linear models do not improve the score
-
-    while True:
+    # If no more transcript candidates are left to process, break
+    while not linear_models_leftover_df.empty:
         baseline_error = get_sum_of_squares(depth_frame_df["actual_depth"], depth_frame_df["depth"])
         data = [{"id":row.id, "a":row.a, "b":row.b, "dstart":row.dstart, "dend":row.dend} for row in linear_models_leftover_df.itertuples()]
         indiv_assessment_frame_df = pd.DataFrame(data, index=linear_models_leftover_df.index)
@@ -301,7 +307,7 @@ def find_best_transcripts(linear_models_df, raw_depth_s, range_start, range_end)
         # Perform predictions for each transcript candidate
         for row in indiv_assessment_frame_df.itertuples():
             # ? could we use model.predict to get this instead?
-            predicted_frame_df = predict_linear_domain(row, range_start, range_end)
+            predicted_frame_df = predict_linear_domain(row, total_range_s)
             normalize_linear_domain_depth(depth_frame_df, predicted_frame_df)
             indiv_assessment_frame_df.loc[row.Index, "sum_error"] = get_sum_of_squares(depth_frame_df["actual_depth"], predicted_frame_df["predicted_depth"])
             indiv_assessment_frame_df.loc[row.Index, "depth_fraction"]  = len(predicted_frame_df[predicted_frame_df["depth"] > 0]) / len(predicted_frame_df)
@@ -325,14 +331,11 @@ def find_best_transcripts(linear_models_df, raw_depth_s, range_start, range_end)
 
         best_leftover_transcript_s = linear_models_leftover_df[linear_models_leftover_df["id"] == best_transcript].squeeze()
 
-        predicted_frame_df = predict_linear_domain(best_leftover_transcript_s, range_start, range_end)
+        predicted_frame_df = predict_linear_domain(best_leftover_transcript_s, total_range_s)
         normalize_linear_domain_depth(depth_frame_df, predicted_frame_df)
         depth_frame_df["depth"] = predicted_frame_df["predicted_depth"]
 
         linear_models_leftover_df = linear_models_leftover_df[~(linear_models_leftover_df["id"] == best_transcript)]
-        # If no more transcript candidates are left to process, break
-        if linear_models_leftover_df.empty:
-            break
 
     return final_transcripts
 
@@ -465,8 +468,8 @@ def create_slope_df(depth_df):
 def create_depth_df(reads_df:pd.DataFrame, total_range_s:pd.Series):
     depth_df = pd.DataFrame(total_range_s, columns=["rel_position"])
     depth_df["transcript"] = reads_df["chr"].unique()[0]    # Since we grouped by chromosome, all reads should be in same chromosome
-    for pos in depth_df["rel_position"].tolist():
-        depth_df.loc[depth_df["rel_position"] == pos, "raw_depth"] = len(reads_df[(reads_df["start"] <= pos) & (pos < reads_df["end"])])
+    raw_depth_list = [len(reads_df[(reads_df["start"] <= pos) & (pos < reads_df["end"])]) for pos in depth_df["rel_position"].tolist()]
+    depth_df["raw_depth"] = pd.Series(raw_depth_list)
 
     # normalized depth
     depth_df["norm_depth"] = depth_df["raw_depth"] / max(depth_df["raw_depth"])
@@ -478,18 +481,18 @@ def get_raw_depth(depth_reads_df):
     depth_reads_df["in_range"] = depth_reads_df["rel_position"].between(depth_reads_df["start"], depth_reads_df["end"], inclusive="left")
     return depth_reads_df.groupby("rel_position")["in_range"].sum().to_list()  # to list, otherwise indexes don't match
 
-#### Depth Evaluation Function
-def predict_linear_domain(transcript_s, range_start, range_end):
+def predict_linear_domain(transcript_s, total_range_s):
+    """Evaluate depth for each position in the region using this transcript's linear model"""
     # row - dstart/dend - transcript domain region
     # range_start/range_end - distinct region range
     # row - a - coefficient
     # row - b - y-intercept
 
-    data = [{"rel_position":i + range_start, "depth":0} for i in range(range_end - range_start)]
-    depth_frame_df = pd.DataFrame(data)
+    depth_frame_df = pd.DataFrame(total_range_s, columns=["rel_position"])
+    depth_frame_df["depth"] = 0
 
     # NOTE: Explored using sckit-learn LinearRegression.predict, but it was slightly slower due to extra checks
-    depth_frame_df["in_range"] = depth_frame_df["rel_position"].apply(is_in_range, args=(transcript_s.dstart, transcript_s.dend))
+    depth_frame_df["in_range"] = depth_frame_df["rel_position"].between(transcript_s.dstart, transcript_s.dend, inclusive="left")
     in_range_df = depth_frame_df[depth_frame_df["in_range"]]
 
     # prediction is y = ax + b
