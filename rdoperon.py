@@ -22,6 +22,10 @@ model = LinearRegression()
 # We will bin the entire transcript region and take the min start or max end per bin
 BIN_SIZE = 25
 
+# This is the minimum depth required across a region.
+# If the depth falls under this amount, then the region is split here.
+MIN_REGION_DEPTH = 1
+
 def main():
     parser = argparse.ArgumentParser(
         description="Predict operons based on a finding candidate start/stop sites," \
@@ -67,6 +71,8 @@ def main():
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"], sort=False)
     for name, subread_ranges_df in read_ranges_grouped:
+        if not name[1] == 677:
+            continue
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
@@ -112,7 +118,8 @@ def prepend_gff_version(filename):
         f.write("##gff-version 3\n")
 
 def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
-    # NOTE: From my understanding, each "region" interval is only on a single strand
+    # Each region belongs to a single chromosome and strand
+    chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
 
     # These should also have just one unique val too
@@ -158,94 +165,149 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
     if verbose:
         print("\t- Region depth calculations")
     depth_df = create_depth_df(reads_df[["chr", "start", "end"]], total_range_s)
-    raw_depth_s = depth_df["raw_depth"]
 
-    #print("DEPTH_DF")
-    #print(depth_df)
+    # Filter any low-quality parts of the region
+    # For now, I am including the extreme ends as it is easier to code
+    # Also we only will do this once.
+    good_region_depth_df = depth_df[depth_df["raw_depth"] > MIN_REGION_DEPTH].reset_index()
+    bad_region_depth_df = depth_df[~(depth_df["raw_depth"] > MIN_REGION_DEPTH)].reset_index()
+    reads_to_rm_df = pd.DataFrame(columns=reads_df.columns)
+    # Find all reads to remove
+    for pos in bad_region_depth_df["rel_position"]:
+        reads_to_rm_df = pd.concat([reads_to_rm_df, reads_df[(reads_df["start"] <= pos) & (pos < reads_df["end"])]])
+    # Remove from master regional read list
+    reads_df = reads_df[~reads_df["name"].isin(reads_to_rm_df.drop_duplicates()["name"])]
+    region_reads_df = reads_df.copy()
 
-    # Get 1st and 2nd derivative information based on changes in depth
-    # 1st derivative is norm_delta
-    # Some depths will be higher than others, so this is normalized in "norm_derivative"
-    if verbose:
-        print("\t- Change of depth calculations")
-    slope_df = create_slope_df(depth_df)
+    # Split good region positions into new regions per consecutive sequence of numbers
+    # Source -> https://stackoverflow.com/a/7353335
+    good_pos = good_region_depth_df["rel_position"].to_numpy()
+    # Create number of intervals (+1) where gap between current and next number is not 1
+    new_regions = np.split(good_pos, np.where(np.diff(good_pos) != 1)[0]+1)
+    split_counter = 0
 
-    # Filter by whatever excceds + and - standard deviation cutoff
-    filtered_slope_df = filter_slope_df_by_std(slope_df, num_stdev)
+    orig_region_index = region_index
+    for region_arr in new_regions:
+        # Update region start and end based on the good positions
+        local_start = np.min(region_arr)
+        local_end = np.max(region_arr)
+        subregion_range_s = pd.Series(list(range(local_start, local_end)))
 
-    # Build candidate start and stop regions. The entire region range can be considered a transcript
-    start_sites = get_candidate_starts(range_start, filtered_slope_df)
-    end_sites = get_candidate_ends(range_end, filtered_slope_df)
+        # If subregion is just a single base, skip
+        if not len(subregion_range_s):
+            continue
 
-    # Determine candidate transcripts using every combination of start/stop bins
-    cartesian_pos_sites = list(product(start_sites, end_sites))
-    transcript_candidate_data = [{"id": index, "start": pos[0], "end":pos[1]} for index, pos in enumerate(cartesian_pos_sites)]
 
-    possible_transcripts_df = create_possible_transcripts_df(transcript_candidate_data)
+        if len(new_regions) > 1:
+            if verbose:
+                print(f"\t- Region split {split_counter}")
+            region_index = f"{orig_region_index}/{split_counter}"
+            split_counter += 1
 
-    #print("POSSIBLE TRANSCRIPTS DF")
-    #print(possible_transcripts_df)
+        # Reassign reads to the new sub-regions
+        # There may be a situation where reads were removed that fit a subregion previously
+        # but now no remaining reads align to that subregion.
+        subread_ranges_s = pd.Series({
+            "chr":chromosome
+            , "start":local_start
+            , "end": local_end
+            , "strand": orientation
+            })
+        reads_df = assign_reads_to_region(subread_ranges_s, region_reads_df)
+        if reads_df.empty:
+            if verbose:
+                print(f"\t- Removed subregion {region_index} as no reads were assigned to it.")
+            continue
 
-    # ? At this point we may have some transcripts with very close start or end coords.
-    # Does it make sense to bin here and get the extreme end coordinate?
+        # NOTE: Initially I thought if there was one region we should just keep original depth and ranges
+        # but we would also need to restore the original set of reads too. I figured we would just leave be for now
+        depth_df = create_depth_df(reads_df[["chr", "start", "end"]], subregion_range_s)
 
-    if verbose:
-        print("\t- Assigning reads to candidate transcripts")
+        #print("DEPTH_DF")
+        #print(depth_df)
 
-    if len(possible_transcripts_df) == 1 \
-        and possible_transcripts_df.iloc[0]["start"] == range_start \
-        and possible_transcripts_df.iloc[0]["end"] == range_end:
-            # if there is only one transcript and it spans the region, just use the region depth
-            # since all reads were assigned to this region already
-            transcript_id = "T_{}".format(possible_transcripts_df.iloc[0]["id"])
-            depth_subtranscripts_df = pd.DataFrame(total_range_s, columns=["rel_position"])
-            depth_subtranscripts_df[transcript_id] = depth_df["raw_depth"]
-    else:
-        # Generate each individual transcript depth and model them with domains
-        depth_subtranscripts_df = get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s)
+        # Get 1st and 2nd derivative information based on changes in depth
+        # 1st derivative is norm_delta
+        # Some depths will be higher than others, so this is normalized in "norm_derivative"
+        if verbose:
+            print("\t- Change of depth calculations")
+        slope_df = create_slope_df(depth_df)
+        raw_depth_s = slope_df["raw_depth"]
 
-    if verbose:
-        print("\t- Create linear models")
+        # Filter by whatever excceds + and - standard deviation cutoff
+        filtered_slope_df = filter_slope_df_by_std(slope_df, num_stdev)
 
-    linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df)
+        # Build candidate start and stop regions. The entire region range can be considered a transcript
+        start_sites = get_candidate_starts(local_start, filtered_slope_df)
+        end_sites = get_candidate_ends(local_start, filtered_slope_df)
 
-    #print("LINEAR MODELS DF")
-    #print(linear_models_df)
+        # Determine candidate transcripts using every combination of start/stop bins
+        cartesian_pos_sites = list(product(start_sites, end_sites))
+        transcript_candidate_data = [{"id": index, "start": pos[0], "end":pos[1]} for index, pos in enumerate(cartesian_pos_sites)]
 
-    if verbose:
-        print("\t- Predicting best candidate transcripts")
+        possible_transcripts_df = create_possible_transcripts_df(transcript_candidate_data)
 
-    # Apply the linear model iteratively until a convergence happens, taking the best transcript at each step
-    # Output key - transcript, value - normalized error score
-    final_transcripts_dict = find_best_transcripts(linear_models_df, raw_depth_s, total_range_s)
+        #print("POSSIBLE TRANSCRIPTS DF")
+        #print(possible_transcripts_df)
 
-    if verbose:
-        print("\t- Finalizing transcript list")
+        # ? At this point we may have some transcripts with very close start or end coords.
+        # Does it make sense to bin here and get the extreme end coordinate?
 
-    final_transcripts_df = possible_transcripts_df[possible_transcripts_df["id"].isin((list(final_transcripts_dict.keys())))].copy()
+        if verbose:
+            print("\t- Assigning reads to candidate transcripts")
 
-    for row in final_transcripts_df.itertuples():
-        chr = reads_df["chr"].unique()[0]
-        operon_name = f"O_{region_index}_T{row.Index}"
-        start = row.start
-        end = row.end
-        score = "."
-        transcript_s = pd.Series([chr, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
-        transcript_s["name"] = operon_name
-        subtranscript_df.loc[len(subtranscript_df)] = transcript_s
+        if len(possible_transcripts_df) == 1 \
+            and possible_transcripts_df.iloc[0]["start"] == local_start \
+            and possible_transcripts_df.iloc[0]["end"] == local_end:
+                # if there is only one transcript and it spans the region, just use the region depth
+                # since all reads were assigned to this region already
+                transcript_id = "T_{}".format(possible_transcripts_df.iloc[0]["id"])
+                depth_subtranscripts_df = pd.DataFrame(subregion_range_s, columns=["rel_position"])
+                depth_subtranscripts_df[transcript_id] = depth_df["raw_depth"]
+        else:
+            # Generate each individual transcript depth and model them with domains
+            depth_subtranscripts_df = get_indiv_transcript_depths(reads_df, possible_transcripts_df, subregion_range_s)
 
-        gff_s = pd.Series(index=GFF_OUTPUT_COLS)
-        gff_s["seqid"] = chr
-        gff_s["source"] = "rdoperon.py"
-        gff_s["type"] = "transcript"
-        gff_s["start"] = start + 1  # GFF3 are 1-indexed
-        gff_s["end"] = end  # inclusive
-        gff_s["score"] = round(final_transcripts_dict[row.Index], 2)
-        gff_s["strand"] = orientation
-        gff_s["phase"] = "."
-        gff_s["attributes"] = f"ID={operon_name}"
-        annotation_df.loc[len(annotation_df)] = gff_s
+        if verbose:
+            print("\t- Create linear models")
 
+        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df)
+
+        #print("LINEAR MODELS DF")
+        #print(linear_models_df)
+
+        if verbose:
+            print("\t- Predicting best candidate transcripts")
+
+        # Apply the linear model iteratively until a convergence happens, taking the best transcript at each step
+        # Output key - transcript, value - normalized error score
+        final_transcripts_dict = find_best_transcripts(linear_models_df, raw_depth_s, subregion_range_s)
+
+        if verbose:
+            print("\t- Finalizing transcript list")
+
+        final_transcripts_df = possible_transcripts_df[possible_transcripts_df["id"].isin((list(final_transcripts_dict.keys())))].copy()
+
+        for row in final_transcripts_df.itertuples():
+            operon_name = f"O_{region_index}_T{row.Index}"
+            start = row.start
+            end = row.end
+            score = "."
+            transcript_s = pd.Series([chromosome, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
+            transcript_s["name"] = operon_name
+            subtranscript_df.loc[len(subtranscript_df)] = transcript_s
+
+            gff_s = pd.Series(index=GFF_OUTPUT_COLS)
+            gff_s["seqid"] = chromosome
+            gff_s["source"] = "rdoperon.py"
+            gff_s["type"] = "transcript"
+            gff_s["start"] = start + 1  # GFF3 are 1-indexed
+            gff_s["end"] = end  # inclusive
+            gff_s["score"] = round(final_transcripts_dict[row.Index], 2)
+            gff_s["strand"] = orientation
+            gff_s["phase"] = "."
+            gff_s["attributes"] = f"ID={operon_name}"
+            annotation_df.loc[len(annotation_df)] = gff_s
     return subtranscript_df, annotation_df
 
 def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s):
@@ -367,6 +429,7 @@ def get_candidate_starts(range_start, filtered_slope_df):
 
 def filter_slope_df_by_std(slope_df, num_stdev):
     # Breaking the dataframe into positive and negative normalized derivatives
+    # NOTE: We are not filtering st dev away from the pos and neg means, but rather from 0
     std_pos, std_neg = get_std(slope_df)
     std_pos_filter = std_pos * num_stdev
     std_pos_filter_mask = slope_df["norm_derivative"] >= std_pos_filter
