@@ -71,8 +71,6 @@ def main():
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"], sort=False)
     for name, subread_ranges_df in read_ranges_grouped:
-        if not name[1] == 677:
-            continue
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
@@ -196,7 +194,6 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
         # If subregion is just a single base, skip
         if not len(subregion_range_s):
             continue
-
 
         if len(new_regions) > 1:
             if verbose:
