@@ -247,9 +247,6 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
         #print("POSSIBLE TRANSCRIPTS DF")
         #print(possible_transcripts_df)
 
-        # ? At this point we may have some transcripts with very close start or end coords.
-        # Does it make sense to bin here and get the extreme end coordinate?
-
         if verbose:
             print("\t- Assigning reads to candidate transcripts")
 
