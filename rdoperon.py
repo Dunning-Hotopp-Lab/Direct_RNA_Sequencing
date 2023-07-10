@@ -18,14 +18,6 @@ GFF_OUTPUT_COLS = ["seqid", "source", "type", "start", "end", "score", "strand",
 
 model = LinearRegression()
 
-# Some of the operon transcript candidates may have very close start or end coordinates
-# We will bin the entire transcript region and take the min start or max end per bin
-BIN_SIZE = 25
-
-# This is the minimum depth required across a region.
-# If the depth falls under this amount, then the region is split here.
-MIN_REGION_DEPTH = 1
-
 def main():
     parser = argparse.ArgumentParser(
         description="Predict operons based on a finding candidate start/stop sites," \
@@ -39,8 +31,10 @@ def main():
     parser.add_argument('-r', '--reads_bed', type=str, required=True, help='Path to a position-sorted BED file of reads.')
     parser.add_argument('-d', '--ranges_bed', type=str, required=True, help="Path to a BED file of distict non-overlapping interval ranges per strand")
     parser.add_argument('-c', '--chromosome', type=str, required=False, help='Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
-    parser.add_argument('--min_depth', type=int, default=0, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
+    parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
+    parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
+    parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
     parser.add_argument("--num_stdev", type=float, default=2.0, required=False, help="Set the number of standard deviations to filter potential start and stop sites.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
@@ -95,7 +89,7 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.num_stdev, args.verbose)
+        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.num_stdev, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
 
@@ -115,7 +109,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, num_stdev:float, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -167,8 +161,8 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
     # Filter any low-quality parts of the region
     # For now, I am including the extreme ends as it is easier to code
     # Also we only will do this once.
-    good_region_depth_df = depth_df[depth_df["raw_depth"] > MIN_REGION_DEPTH].reset_index()
-    bad_region_depth_df = depth_df[~(depth_df["raw_depth"] > MIN_REGION_DEPTH)].reset_index()
+    good_region_depth_df = depth_df[depth_df["raw_depth"] >= min_region_depth].reset_index()
+    bad_region_depth_df = depth_df[~(depth_df["raw_depth"] >= min_region_depth)].reset_index()
     reads_to_rm_df = pd.DataFrame(columns=reads_df.columns)
     # Find all reads to remove
     for pos in bad_region_depth_df["rel_position"]:
@@ -235,8 +229,8 @@ def predict_region(reads_df:pd.DataFrame, num_stdev:float, verbose:bool):
         filtered_slope_df = filter_slope_df_by_std(slope_df, num_stdev)
 
         # Build candidate start and stop regions. The entire region range can be considered a transcript
-        start_sites = get_candidate_starts(local_start, filtered_slope_df)
-        end_sites = get_candidate_ends(local_start, filtered_slope_df)
+        start_sites = get_candidate_starts(local_start, filtered_slope_df, bin_size)
+        end_sites = get_candidate_ends(local_start, filtered_slope_df, bin_size)
 
         # Determine candidate transcripts using every combination of start/stop bins
         cartesian_pos_sites = list(product(start_sites, end_sites))
@@ -395,28 +389,28 @@ def find_best_transcripts(linear_models_df, raw_depth_s, total_range_s):
 
     return final_transcripts
 
-def get_candidate_ends(range_end, filtered_slope_df):
+def get_candidate_ends(range_end, filtered_slope_df, bin_size):
     end_sites = {range_end}
     end_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == -1, "rel_position"].unique())
     # Bin start and end sites to eliminate closely-grouped positions
     sorted_ends = np.array(sorted(end_sites))
     final_ends = set()
 
-    for pos in range(min(sorted_ends), max(sorted_ends)+1, BIN_SIZE):
-        bin_ends = sorted_ends[(pos <= sorted_ends) & (sorted_ends <= pos+BIN_SIZE)]
+    for pos in range(min(sorted_ends), max(sorted_ends)+1, bin_size):
+        bin_ends = sorted_ends[(pos <= sorted_ends) & (sorted_ends <= pos+bin_size)]
         if len(bin_ends):
             final_ends.add(np.max(bin_ends))
     return final_ends
 
-def get_candidate_starts(range_start, filtered_slope_df):
+def get_candidate_starts(range_start, filtered_slope_df, bin_size):
     start_sites = {range_start}
     start_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == 1, "rel_position"].unique())
     # Bin start and end sites to eliminate closely-grouped positions
     sorted_starts = np.array(sorted(start_sites))
     final_starts = set()
 
-    for pos in range(min(sorted_starts), max(sorted_starts)+1, BIN_SIZE):
-        bin_starts = sorted_starts[(pos <= sorted_starts) & (sorted_starts <= pos+BIN_SIZE)]
+    for pos in range(min(sorted_starts), max(sorted_starts)+1, bin_size):
+        bin_starts = sorted_starts[(pos <= sorted_starts) & (sorted_starts <= pos+bin_size)]
         if len(bin_starts):
             final_starts.add(np.min(bin_starts))
     return final_starts
