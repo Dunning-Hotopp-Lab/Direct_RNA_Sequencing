@@ -183,8 +183,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         # Update region start and end based on the good positions
         local_start = np.min(region_arr)
         local_end = np.max(region_arr)
-        subregion_range_s = pd.Series(list(range(local_start, local_end)))
-
+        subregion_range_s = pd.Series(list(range(local_start, local_end+1)))    # local_end has valid depth, but
         # If subregion is just a single base, skip
         if not len(subregion_range_s):
             continue
@@ -201,7 +200,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         subread_ranges_s = pd.Series({
             "chr":chromosome
             , "start":local_start
-            , "end": local_end
+            , "end": local_end + 1  # Subread range needs to be non-inclusive on end
             , "strand": orientation
             })
         reads_df = assign_reads_to_region(subread_ranges_s, region_reads_df)
@@ -504,9 +503,13 @@ def create_possible_transcripts_df(transcript_dict):
 
 def create_slope_df(depth_df):
     slope_df = depth_df[["transcript", "rel_position", "norm_depth", "raw_depth"]].sort_values(by="rel_position")
-    # Get the next position for the slope calculation (final row will be NaN)
-    slope_df["next_raw_depth"] = slope_df["raw_depth"].shift(periods=-1)
-    slope_df["next_norm_depth"] = slope_df["norm_depth"].shift(periods=-1)
+    # Adding a 0-depth entry just beyond left-most area (https://stackoverflow.com/a/45466227)
+    slope_df.loc[-1] = [slope_df.loc[0, "transcript"], np.min(slope_df["rel_position"])-1, 0, 0]
+    slope_df.index = slope_df.index + 1
+    slope_df = slope_df.sort_index()
+    # Get the next position for the slope calculation (final row will be filled with 0)
+    slope_df["next_raw_depth"] = slope_df["raw_depth"].shift(periods=-1).fillna(0)
+    slope_df["next_norm_depth"] = slope_df["norm_depth"].shift(periods=-1).fillna(0)
     # change between positions
     slope_df["norm_delta"] = (slope_df["next_raw_depth"]/10 * slope_df["next_norm_depth"]) - (slope_df["raw_depth"]/10 * slope_df["norm_depth"])
     # average norm depth between positions
