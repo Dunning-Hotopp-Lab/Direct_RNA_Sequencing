@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
     parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
     parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
-    parser.add_argument("--num_stdev", type=float, default=2.0, required=False, help="Set the number of standard deviations to filter potential start and stop sites.")
+    parser.add_argument("--depth_derivative_threshold", type=float, default=1, help="If the absolute derivative of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
     args = parser.parse_args()
@@ -44,8 +44,8 @@ def main():
         sys.exit("--min_depth cannot be less than 0. Exiting")
     if args.max_depth < 1:
         sys.exit("--max_depth cannot be less than 1. Exiting")
-    if args.num_stdev < 0:
-        sys.exit("--num_stdev cannot be less than 0. Exiting")
+    if args.depth_derivative_threshold < 0:
+        sys.exit("--depth_derivative_threshold cannot be less than 0. Exiting")
 
     distinct_ranges = args.ranges_bed
     dr_cols = ["chr","start","end", "strand"]
@@ -65,6 +65,9 @@ def main():
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"], sort=False)
     for name, subread_ranges_df in read_ranges_grouped:
+        subread_ranges_s = subread_ranges_df.squeeze()
+        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
+
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
@@ -72,9 +75,6 @@ def main():
         # Filter only the reads that belong to this region.
         if len(subread_ranges_df) > 1:
             raise f"Found multiple entries for chr {name[0]} and region {name[1]}. Exiting."
-
-        subread_ranges_s = subread_ranges_df.squeeze()
-        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
 
         if len(subreads_df) < args.min_depth:
             print(f"Skipping region {name} because depth is under the min threshold of {args.min_depth}.")
@@ -89,7 +89,7 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.num_stdev, args.verbose)
+        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_derivative_threshold, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
 
@@ -109,7 +109,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, num_stdev:float, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_derivative_threshold:float, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -216,16 +216,16 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         #print("DEPTH_DF")
         #print(depth_df)
 
-        # Get 1st and 2nd derivative information based on changes in depth
-        # 1st derivative is norm_delta
-        # Some depths will be higher than others, so this is normalized in "norm_derivative"
+        # Get 1st derivative information based on changes in depth
+        # 1st derivative is raw_delta
+        # Some depths will be higher than others, so this is normalized in "derivative"
         if verbose:
             print("\t- Change of depth calculations")
         slope_df = create_slope_df(depth_df)
         raw_depth_s = slope_df["raw_depth"]
 
-        # Filter by whatever excceds + and - standard deviation cutoff
-        filtered_slope_df = filter_slope_df_by_std(slope_df, num_stdev)
+        # Filter by whatever excceds absolute derivative threshold cutoff
+        filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_derivative_threshold)
 
         # Build candidate start and stop regions. The entire region range can be considered a transcript
         start_sites = get_candidate_starts(local_start, filtered_slope_df, bin_size)
@@ -414,27 +414,20 @@ def get_candidate_starts(range_start, filtered_slope_df, bin_size):
             final_starts.add(np.min(bin_starts))
     return final_starts
 
-def filter_slope_df_by_std(slope_df, num_stdev):
-    # Breaking the dataframe into positive and negative normalized derivatives
-    # NOTE: We are not filtering st dev away from the pos and neg means, but rather from 0
-    std_pos, std_neg = get_std(slope_df)
-    std_pos_filter = std_pos * num_stdev
-    std_pos_filter_mask = slope_df["norm_derivative"] >= std_pos_filter
-    std_neg_filter = std_neg * -num_stdev
-    std_neg_filter_mask = slope_df["norm_derivative"] <= std_neg_filter
-
-    filtered_slope_df = slope_df.loc[(std_pos_filter_mask) | (std_neg_filter_mask), ["rel_position", "direction"]]
-    return filtered_slope_df
-
-def get_std(slope_df):
-    pos_direction_mask = slope_df["norm_derivative"] > 0
-    neg_direction_mask = slope_df["norm_derivative"] < 0
+def filter_slope_df_by_threshold(slope_df, threshold):
+    # Breaking the dataframe into positive and negative derivatives
+    pos_direction_mask = slope_df["derivative"] > 0
+    neg_direction_mask = slope_df["derivative"] < 0
     slope_df["direction"] = 0
     slope_df.loc[pos_direction_mask, "direction"] = 1
     slope_df.loc[neg_direction_mask, "direction"] = -1
-    std_pos = slope_df.loc[pos_direction_mask, "norm_derivative"].std(skipna=True)
-    std_neg = slope_df.loc[neg_direction_mask, "norm_derivative"].std(skipna=True)
-    return std_pos, std_neg
+
+    pos_filter_mask = (slope_df["raw_depth"] > 0) & (slope_df["derivative"] >= threshold)
+    neg_filter_mask = (slope_df["raw_depth"] > 0) & (slope_df["derivative"] <= (-1 * threshold))
+
+    filtered_slope_df = slope_df.loc[(pos_filter_mask) | (neg_filter_mask), ["rel_position", "direction"]]
+    return filtered_slope_df
+
 
 def create_linear_models( possible_transcripts_df, depth_subtranscripts_df):
     linear_models_df = pd.DataFrame(columns=["id", "a", "b", "dstart", "dend"])
@@ -478,10 +471,6 @@ def assign_reads_to_region(subread_ranges_s, reads_df):
     mask = (subread_ranges_s["start"] <= reads_df["start"]) & (reads_df["end"] <= subread_ranges_s["end"]) & (subread_ranges_s["strand"] == reads_df["strand"])
     return reads_df[mask]
 
-def calc_norm_range_sum(df:pd.DataFrame):
-    # This feels hacky. Need to return a series for the "apply" but switching to numpy loses the indexes
-    return pd.Series(df["sum_norm_slope"].abs() / df["sum_norm_slope"].abs().max(), index=df.index)
-
 def normalize_linear_domain_depth(depth_frame_df, predicted_frame_df):
     # Adjust depth to be in line with scale of recorded actual depth by position
     # NOTE: Edits DataFrame in-place
@@ -502,20 +491,19 @@ def create_possible_transcripts_df(transcript_dict):
     return possible_transcripts_df
 
 def create_slope_df(depth_df):
-    slope_df = depth_df[["transcript", "rel_position", "norm_depth", "raw_depth"]].sort_values(by="rel_position")
+    slope_df = depth_df[["transcript", "rel_position", "raw_depth"]].sort_values(by="rel_position")
     # Adding a 0-depth entry just beyond left-most area (https://stackoverflow.com/a/45466227)
-    slope_df.loc[-1] = [slope_df.loc[0, "transcript"], np.min(slope_df["rel_position"])-1, 0, 0]
+    slope_df.loc[-1] = [slope_df.loc[0, "transcript"], np.min(slope_df["rel_position"])-1, 0]
     slope_df.index = slope_df.index + 1
     slope_df = slope_df.sort_index()
     # Get the next position for the slope calculation (final row will be filled with 0)
     slope_df["next_raw_depth"] = slope_df["raw_depth"].shift(periods=-1).fillna(0)
-    slope_df["next_norm_depth"] = slope_df["norm_depth"].shift(periods=-1).fillna(0)
     # change between positions
-    slope_df["norm_delta"] = (slope_df["next_raw_depth"]/10 * slope_df["next_norm_depth"]) - (slope_df["raw_depth"]/10 * slope_df["norm_depth"])
-    # average norm depth between positions
-    slope_df["norm_split_depth"] = (slope_df["norm_depth"] + slope_df["next_norm_depth"]) / 2
+    slope_df["raw_delta"] = slope_df["next_raw_depth"] - slope_df["raw_depth"]
+    # average depth between positions
+    slope_df["split_depth"] = (slope_df["next_raw_depth"] + slope_df["raw_depth"]) / 2
     # Normalizing change depending on the quantity of depth
-    slope_df["norm_derivative"] = slope_df["norm_delta"] / slope_df["norm_split_depth"]
+    slope_df["derivative"] = slope_df["raw_delta"] / slope_df["split_depth"]
     slope_df = slope_df.dropna()
     return slope_df
 
@@ -524,9 +512,6 @@ def create_depth_df(reads_df:pd.DataFrame, total_range_s:pd.Series):
     depth_df["transcript"] = reads_df["chr"].unique()[0]    # Since we grouped by chromosome, all reads should be in same chromosome
     raw_depth_list = [len(reads_df[(reads_df["start"] <= pos) & (pos < reads_df["end"])]) for pos in depth_df["rel_position"].tolist()]
     depth_df["raw_depth"] = pd.Series(raw_depth_list)
-
-    # normalized depth
-    depth_df["norm_depth"] = depth_df["raw_depth"] / max(depth_df["raw_depth"])
     return depth_df
 
 def get_raw_depth(depth_reads_df):
