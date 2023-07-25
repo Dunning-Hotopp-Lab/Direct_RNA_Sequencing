@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
     parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
     parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
-    parser.add_argument("--depth_derivative_threshold", type=float, default=1, help="If the absolute derivative of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
+    parser.add_argument("--depth_delta_threshold", type=int, default=1, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
     args = parser.parse_args()
@@ -44,8 +44,8 @@ def main():
         sys.exit("--min_depth cannot be less than 0. Exiting")
     if args.max_depth < 1:
         sys.exit("--max_depth cannot be less than 1. Exiting")
-    if args.depth_derivative_threshold < 0:
-        sys.exit("--depth_derivative_threshold cannot be less than 0. Exiting")
+    if args.depth_delta_threshold < 0:
+        sys.exit("--depth_delta_threshold cannot be less than 0. Exiting")
 
     distinct_ranges = args.ranges_bed
     dr_cols = ["chr","start","end", "strand"]
@@ -89,7 +89,7 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_derivative_threshold, args.verbose)
+        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_delta_threshold, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
 
@@ -109,7 +109,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_derivative_threshold:float, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_delta_threshold:int, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -225,7 +225,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         raw_depth_s = slope_df["raw_depth"]
 
         # Filter by whatever excceds absolute derivative threshold cutoff
-        filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_derivative_threshold)
+        filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_delta_threshold)
 
         # Build candidate start and stop regions. The entire region range can be considered a transcript
         start_sites = get_candidate_starts(local_start, filtered_slope_df, bin_size)
@@ -415,17 +415,13 @@ def get_candidate_starts(range_start, filtered_slope_df, bin_size):
     return final_starts
 
 def filter_slope_df_by_threshold(slope_df, threshold):
-    # Breaking the dataframe into positive and negative derivatives
-    pos_direction_mask = slope_df["derivative"] > 0
-    neg_direction_mask = slope_df["derivative"] < 0
-    slope_df["direction"] = 0
+    # Breaking the dataframe into positive and negative changes in depth
+    pos_direction_mask = slope_df["raw_delta"] >= threshold
+    neg_direction_mask = slope_df["raw_delta"] <= (-1 * threshold)
+    slope_df["direction"] = 0   # ? probably not necessary. Sanity-check addition
     slope_df.loc[pos_direction_mask, "direction"] = 1
     slope_df.loc[neg_direction_mask, "direction"] = -1
-
-    pos_filter_mask = (slope_df["raw_depth"] > 0) & (slope_df["derivative"] >= threshold)
-    neg_filter_mask = (slope_df["raw_depth"] > 0) & (slope_df["derivative"] <= (-1 * threshold))
-
-    filtered_slope_df = slope_df.loc[(pos_filter_mask) | (neg_filter_mask), ["rel_position", "direction"]]
+    filtered_slope_df = slope_df[["rel_position", "direction"]]
     return filtered_slope_df
 
 
@@ -501,11 +497,14 @@ def create_slope_df(depth_df):
     # change between positions
     slope_df["raw_delta"] = slope_df["next_raw_depth"] - slope_df["raw_depth"]
     # average depth between positions
-    slope_df["split_depth"] = (slope_df["next_raw_depth"] + slope_df["raw_depth"]) / 2
+    #slope_df["split_depth"] = (slope_df["next_raw_depth"] + slope_df["raw_depth"]) / 2
     # Normalizing change depending on the quantity of depth
-    slope_df["derivative"] = slope_df["raw_delta"] / slope_df["split_depth"]
+    #slope_df["derivative"] = slope_df["raw_delta"] / slope_df["split_depth"]
     slope_df = slope_df.dropna()
-    return slope_df
+
+    # Exclude positions with no depth (incl. out-of-region ones introduced at top of function)
+    depth_filter_mask = slope_df["raw_depth"] > 0
+    return slope_df[depth_filter_mask]
 
 def create_depth_df(reads_df:pd.DataFrame, total_range_s:pd.Series):
     depth_df = pd.DataFrame(total_range_s, columns=["rel_position"])
