@@ -37,8 +37,13 @@ options:
                         Minimum required depth for a distinct region to find candidate transcripts.
   --max_depth MAX_DEPTH
                         Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
-  --num_stdev NUM_STDEV
-                        Set the number of standard deviations to filter potential start and stop sites.
+  --min_region_depth MIN_REGION_DEPTH
+                        Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct
+                        subregions are created from the remaining runs of positions.
+  --bin_size BIN_SIZE   Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire
+                        transcript region and take the min start or max end positions per bin amongst the candidate positions.
+  --depth_delta_threshold DEPTH_DELTA_THRESHOLD
+                        If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
                         Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
   -v, --verbose         If enabled, print detailed step progress.
