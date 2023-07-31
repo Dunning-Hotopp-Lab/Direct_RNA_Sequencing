@@ -18,6 +18,7 @@ GFF_OUTPUT_COLS = ["seqid", "source", "type", "start", "end", "score", "strand",
 
 model = LinearRegression()
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Predict operons based on a finding candidate start/stop sites," \
@@ -36,6 +37,7 @@ def main():
     parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
     parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
     parser.add_argument("--depth_delta_threshold", type=int, default=1, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
+    parser.add_argument("--model_assigned_read_threshold", type=int, default=2, help="When assigning reads to candidate transcripts (models), throw out any models below this threshold of reads assigned to it.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
     args = parser.parse_args()
@@ -46,6 +48,9 @@ def main():
         sys.exit("--max_depth cannot be less than 1. Exiting")
     if args.depth_delta_threshold < 0:
         sys.exit("--depth_delta_threshold cannot be less than 0. Exiting")
+    if args.model_assigned_read_threshold < 0:
+        sys.exit("--model_assigned_read_threshold cannot be less than 0. Exiting")
+
 
     distinct_ranges = args.ranges_bed
     dr_cols = ["chr","start","end", "strand"]
@@ -60,6 +65,7 @@ def main():
     reads_df = reads_df.sort_values(by=["chr", "strand", "start"]).reset_index(drop=True)
 
     transcript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
+    candidate_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
     annotation_df = pd.DataFrame(columns=GFF_OUTPUT_COLS)
 
     # Process each usable region
@@ -89,13 +95,17 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_delta_threshold, args.verbose)
+        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_delta_threshold, args.model_assigned_read_threshold, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
+        candidate_df = pd.concat([candidate_df, region_candidate_df], ignore_index=True)
 
     output_prefix = args.output_prefix
     transcript_df = transcript_df.sort_values(by=["chr", "strand", "start"])
     transcript_df.to_csv(f"{output_prefix}.bed", sep="\t", index=False, header=False)
+
+    candidate_df = candidate_df.sort_values(by=["chr", "strand", "start"])
+    candidate_df.to_csv(f"{output_prefix}.candidates.bed", sep="\t", index=False, header=False)
 
     annotation_df = annotation_df.sort_values(by=["seqid", "strand", "start"])
     annotation_df.to_csv(f"{output_prefix}.gff3", sep="\t", index=False, header=False)
@@ -109,7 +119,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_delta_threshold:int, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_delta_threshold:int, model_assigned_read_threshold:int, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -125,8 +135,9 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
     range_end = reads_df["end"].max()
     total_range_s = pd.Series(list(range(range_start, range_end)))
 
-    subtranscript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
+    subtranscript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)    # final predicted transcripts
     annotation_df = pd.DataFrame(columns=GFF_OUTPUT_COLS)
+    candidate_df = pd.DataFrame(columns=BED_OUTPUT_COLS)    # all candidate transcripts
 
     # If only one read in the region interval, that will be the de facto operon
     if len(reads_df) < 2:
@@ -138,6 +149,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         reads_s["score"] = "."
         reads_s["strand"] = orientation
         subtranscript_df.loc[len(subtranscript_df)] = reads_s
+        candidate_df.loc[len(candidate_df)] = reads_s
 
         gff_s = pd.Series(index=GFF_OUTPUT_COLS)
         gff_s["seqid"] = reads_s["chr"]
@@ -151,7 +163,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         gff_s["attributes"] = f"ID={operon_name}"
         annotation_df.loc[len(annotation_df)] = gff_s
 
-        return subtranscript_df, annotation_df
+        return subtranscript_df, annotation_df, candidate_df
 
     # Depth within distinct region
     if verbose:
@@ -224,6 +236,28 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         slope_df = create_slope_df(depth_df)
         raw_depth_s = slope_df["raw_depth"]
 
+
+        """
+        --- Normalizing the threshold function ---
+
+        define t(input) is the input that is put into the command (default 6)
+        define p = (#reads in the region) / (bp of the region) # p="density of reads starting"
+
+        if (p > 0.25) {
+            # observed that 50% of reads start at the beginning of the region, hence 4
+            t(applied) = p * 4 * t(input)
+        } else {
+            t(applied) = t(input)
+        }
+
+        And for any  region we actually use t(applied) instead of the t input
+
+        ###TODO: (maybe)
+        Figure out the number of reads starting at each position
+        Keep position if it was over the threshold
+
+        """
+
         # Filter by whatever excceds absolute derivative threshold cutoff
         filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_delta_threshold)
 
@@ -239,6 +273,15 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
 
         #print("POSSIBLE TRANSCRIPTS DF")
         #print(possible_transcripts_df)
+
+        for row in possible_transcripts_df.itertuples():
+            operon_name = f"O_{region_index}_T{row.Index}"
+            start = row.start
+            end = row.end
+            score = "."
+            transcript_s = pd.Series([chromosome, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
+            transcript_s["name"] = operon_name
+            candidate_df.loc[len(candidate_df)] = transcript_s
 
         if verbose:
             print("\t- Assigning reads to candidate transcripts")
@@ -258,7 +301,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         if verbose:
             print("\t- Create linear models")
 
-        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df)
+        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df, model_assigned_read_threshold)
 
         #print("LINEAR MODELS DF")
         #print(linear_models_df)
@@ -295,7 +338,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
             gff_s["phase"] = "."
             gff_s["attributes"] = f"ID={operon_name}"
             annotation_df.loc[len(annotation_df)] = gff_s
-    return subtranscript_df, annotation_df
+    return subtranscript_df, annotation_df, candidate_df
 
 def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s):
     reads_shinking_df = reads_df.copy()
@@ -425,7 +468,7 @@ def filter_slope_df_by_threshold(slope_df, threshold):
     return filtered_slope_df
 
 
-def create_linear_models( possible_transcripts_df, depth_subtranscripts_df):
+def create_linear_models( possible_transcripts_df, depth_subtranscripts_df, model_assigned_read_threshold):
     linear_models_df = pd.DataFrame(columns=["id", "a", "b", "dstart", "dend"])
     # Make linear models
     for row in possible_transcripts_df.itertuples():
@@ -445,6 +488,9 @@ def create_linear_models( possible_transcripts_df, depth_subtranscripts_df):
         modeling_depth_df["log"] = np.log10(modeling_depth_df[transcript_id])
 
         if modeling_depth_df.empty:
+            continue
+
+        if len(modeling_depth_df) < model_assigned_read_threshold:
             continue
 
         # Fit linear model (independent x val, dependent y val) and store results in-place

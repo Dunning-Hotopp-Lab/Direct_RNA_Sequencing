@@ -21,7 +21,9 @@ The general command is `python3 rdoperon.py <options>`
 If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app rdoperon <options>`
 
 ```text
-usage: rdoperon.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [-b NUM_BINS]
+usage: rdoperon.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH]
+                   [--min_region_depth MIN_REGION_DEPTH] [--bin_size BIN_SIZE] [--depth_delta_threshold DEPTH_DELTA_THRESHOLD]
+                   [--model_assigned_read_threshold MODEL_ASSIGNED_READ_THRESHOLD] [-o OUTPUT_PREFIX] [-v]
 
 Predict operons based on a finding candidate start/stop sites, and filter alternative transcripts that could make use of various start/stop combinations.
 
@@ -44,6 +46,8 @@ options:
                         transcript region and take the min start or max end positions per bin amongst the candidate positions.
   --depth_delta_threshold DEPTH_DELTA_THRESHOLD
                         If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.
+  --model_assigned_read_threshold MODEL_ASSIGNED_READ_THRESHOLD
+                        When assigning reads to candidate transcripts (models), throw out any models below this threshold of reads assigned to it.
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
                         Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
   -v, --verbose         If enabled, print detailed step progress.
