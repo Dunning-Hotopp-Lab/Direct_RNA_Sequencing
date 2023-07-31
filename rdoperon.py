@@ -25,8 +25,9 @@ def main():
             " and filter alternative transcripts that could make use of various start/stop combinations."
         , epilog="--reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)\n" \
             "--ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)\n\n" \
-            "The first output file is a 6-column BED file of all candidate alternative transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)"
-            "The second output file is a 9-column GFF3 file of the same contents from the BED file. The 'score' column is the normalized score from predicting the best transcripts for a region."
+            "The first output file ('.candidates.bed') is a 6-column BED file of all candidate transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)."
+            "The second output file is a 6-column BED file of all predicted transcripts for each chromsome that passed our linear model fitting and prediction cutoffs. The columns are the same as the first file."
+            "The third output file is a 9-column GFF3 file of the same contents from the BED file. The 'score' column is the normalized score from predicting the best transcripts for a region."
         , formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('-r', '--reads_bed', type=str, required=True, help='Path to a position-sorted BED file of reads.')
@@ -296,12 +297,12 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
                 depth_subtranscripts_df[transcript_id] = depth_df["raw_depth"]
         else:
             # Generate each individual transcript depth and model them with domains
-            depth_subtranscripts_df = get_indiv_transcript_depths(reads_df, possible_transcripts_df, subregion_range_s)
+            depth_subtranscripts_df = get_indiv_transcript_depths(reads_df, possible_transcripts_df, subregion_range_s, model_assigned_read_threshold)
 
         if verbose:
             print("\t- Create linear models")
 
-        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df, model_assigned_read_threshold)
+        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df)
 
         #print("LINEAR MODELS DF")
         #print(linear_models_df)
@@ -340,7 +341,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
             annotation_df.loc[len(annotation_df)] = gff_s
     return subtranscript_df, annotation_df, candidate_df
 
-def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s):
+def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s, model_assigned_read_threshold):
     reads_shinking_df = reads_df.copy()
     depth_subtranscripts_df = pd.DataFrame(total_range_s, columns=["rel_position"])
 
@@ -363,6 +364,9 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s
 
         # No interior reads assigned to this transcript
         if interior_reads_df.empty:
+            continue
+
+        if len(interior_reads_df) < model_assigned_read_threshold:
             continue
 
         # Calculate base depth just among interior reads for a transcript
@@ -468,7 +472,7 @@ def filter_slope_df_by_threshold(slope_df, threshold):
     return filtered_slope_df
 
 
-def create_linear_models( possible_transcripts_df, depth_subtranscripts_df, model_assigned_read_threshold):
+def create_linear_models( possible_transcripts_df, depth_subtranscripts_df):
     linear_models_df = pd.DataFrame(columns=["id", "a", "b", "dstart", "dend"])
     # Make linear models
     for row in possible_transcripts_df.itertuples():
@@ -488,9 +492,6 @@ def create_linear_models( possible_transcripts_df, depth_subtranscripts_df, mode
         modeling_depth_df["log"] = np.log10(modeling_depth_df[transcript_id])
 
         if modeling_depth_df.empty:
-            continue
-
-        if len(modeling_depth_df) < model_assigned_read_threshold:
             continue
 
         # Fit linear model (independent x val, dependent y val) and store results in-place
