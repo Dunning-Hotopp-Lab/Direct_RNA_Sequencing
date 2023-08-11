@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
     parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
-    parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
+    parser.add_argument("--candidate_offset_len", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
     parser.add_argument("--depth_delta_threshold", type=int, default=1, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
     parser.add_argument("--model_assigned_read_threshold", type=int, default=2, help="When assigning reads to candidate transcripts (models), throw out any models below this threshold of reads assigned to it.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
@@ -96,7 +96,7 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.depth_delta_threshold, args.model_assigned_read_threshold, args.verbose)
+        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_depth, args.candidate_offset_len, args.depth_delta_threshold, args.model_assigned_read_threshold, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
         candidate_df = pd.concat([candidate_df, region_candidate_df], ignore_index=True)
@@ -120,7 +120,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, depth_delta_threshold:int, model_assigned_read_threshold:int, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, candidate_offset_len:int, depth_delta_threshold:int, model_assigned_read_threshold:int, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -263,8 +263,8 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, de
         filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_delta_threshold)
 
         # Build candidate start and stop regions. The entire region range can be considered a transcript
-        start_sites = get_candidate_starts(local_start, filtered_slope_df, bin_size)
-        end_sites = get_candidate_ends(local_start, filtered_slope_df, bin_size)
+        start_sites = get_candidate_starts(local_start, filtered_slope_df, candidate_offset_len)
+        end_sites = get_candidate_ends(local_start, filtered_slope_df, candidate_offset_len)
 
         # Determine candidate transcripts using every combination of start/stop bins
         cartesian_pos_sites = list(product(start_sites, end_sites))
@@ -435,30 +435,39 @@ def find_best_transcripts(linear_models_df, raw_depth_s, total_range_s):
 
     return final_transcripts
 
-def get_candidate_ends(range_end, filtered_slope_df, bin_size):
+def get_candidate_ends(range_end, filtered_slope_df, candidate_offset_len):
     end_sites = {range_end}
     end_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == -1, "rel_position"].unique())
-    # Bin start and end sites to eliminate closely-grouped positions
-    sorted_ends = np.array(sorted(end_sites))
+    sorted_ends = np.array(sorted(end_sites, reverse=True))
     final_ends = set()
 
-    for pos in range(min(sorted_ends), max(sorted_ends)+1, bin_size):
-        bin_ends = sorted_ends[(pos <= sorted_ends) & (sorted_ends <= pos+bin_size)]
-        if len(bin_ends):
-            final_ends.add(np.max(bin_ends))
+    max_end = max(sorted_ends)
+    final_ends.add(max_end)
+
+    # Only take ends that are not close together
+    for pos in sorted_ends:
+        if pos + candidate_offset_len <= max_end:
+            max_end = pos
+            final_ends.add(max_end)
+
     return final_ends
 
-def get_candidate_starts(range_start, filtered_slope_df, bin_size):
+def get_candidate_starts(range_start, filtered_slope_df, candidate_offset_len):
     start_sites = {range_start}
     start_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == 1, "rel_position"].unique())
-    # Bin start and end sites to eliminate closely-grouped positions
+
     sorted_starts = np.array(sorted(start_sites))
     final_starts = set()
 
-    for pos in range(min(sorted_starts), max(sorted_starts)+1, bin_size):
-        bin_starts = sorted_starts[(pos <= sorted_starts) & (sorted_starts <= pos+bin_size)]
-        if len(bin_starts):
-            final_starts.add(np.min(bin_starts))
+    min_start = min(sorted_starts)
+    final_starts.add(min_start)
+
+    # Only take starts that are not close together
+    for pos in sorted_starts:
+        if min_start + candidate_offset_len <= pos:
+            min_start = pos
+            final_starts.add(min_start)
+
     return final_starts
 
 def filter_slope_df_by_threshold(slope_df, threshold):
