@@ -10,13 +10,18 @@ and filter alternative transcripts that could make use of various start/stop com
 import argparse, sys
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import PoissonRegressor
 from itertools import product
+
+# Prevent warnings about parameter validation from popping up when computing the score
+# Available in v1.3
+#import sklearn
+#sklearn.set_config(skip_parameter_validation = False)
 
 BED_OUTPUT_COLS = ["chr","start","end","name","score","strand"]
 GFF_OUTPUT_COLS = ["seqid", "source", "type", "start", "end", "score", "strand", "phase", "attributes"]
-
-model = LinearRegression()
 
 def main():
     parser = argparse.ArgumentParser(
@@ -24,8 +29,9 @@ def main():
             " and filter alternative transcripts that could make use of various start/stop combinations."
         , epilog="--reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)\n" \
             "--ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)\n\n" \
-            "The first output file is a 6-column BED file of all candidate alternative transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)"
-            "The second output file is a 9-column GFF3 file of the same contents from the BED file. The 'score' column is the normalized score from predicting the best transcripts for a region."
+            "The first output file ('.candidates.bed') is a 6-column BED file of all candidate transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand)."
+            "The second output file is a 6-column BED file of all predicted transcripts for each chromsome that passed our linear model fitting and prediction cutoffs. The columns are the same as the first file."
+            "The third output file is a 9-column GFF3 file of the same contents from the second BED file. The 'score' column is the normalized score from predicting the best transcripts for a region."
         , formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('-r', '--reads_bed', type=str, required=True, help='Path to a position-sorted BED file of reads.')
@@ -34,9 +40,11 @@ def main():
     parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
     parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
-    parser.add_argument("--bin_size", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. Perform binning of the specified size on the entire transcript region and take the min start or max end positions per bin amongst the candidate positions.")
-    parser.add_argument("--num_stdev", type=float, default=2.0, required=False, help="Set the number of standard deviations to filter potential start and stop sites.")
+    parser.add_argument("--candidate_offset_len", type=int, default=25, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
+    parser.add_argument("--depth_delta_threshold", type=int, default=1, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
+    parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="The ratio of reads assigned solely to a candidate transcript to all assigned reads to the same transcript. Keep transcripts that exceed this ratio.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
+    parser.add_argument("--candidates_only", action="store_true", help="If enabled, skip the linear-model fitting step for the candidate transcripts and print out the candidate transcripts only")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
     args = parser.parse_args()
 
@@ -44,8 +52,10 @@ def main():
         sys.exit("--min_depth cannot be less than 0. Exiting")
     if args.max_depth < 1:
         sys.exit("--max_depth cannot be less than 1. Exiting")
-    if args.num_stdev < 0:
-        sys.exit("--num_stdev cannot be less than 0. Exiting")
+    if args.depth_delta_threshold < 0:
+        sys.exit("--depth_delta_threshold cannot be less than 0. Exiting")
+    if args.assigned_read_ratio_threshold < 0 or args.assigned_read_ratio_threshold > 1:
+        sys.exit("--assigned_read_ratio_threshold most be between 0 and 1. Exiting")
 
     distinct_ranges = args.ranges_bed
     dr_cols = ["chr","start","end", "strand"]
@@ -60,11 +70,16 @@ def main():
     reads_df = reads_df.sort_values(by=["chr", "strand", "start"]).reset_index(drop=True)
 
     transcript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
+    candidate_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
     annotation_df = pd.DataFrame(columns=GFF_OUTPUT_COLS)
 
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"], sort=False)
     for name, subread_ranges_df in read_ranges_grouped:
+        subread_ranges_s = subread_ranges_df.squeeze()
+
+        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
+
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
@@ -72,9 +87,6 @@ def main():
         # Filter only the reads that belong to this region.
         if len(subread_ranges_df) > 1:
             raise f"Found multiple entries for chr {name[0]} and region {name[1]}. Exiting."
-
-        subread_ranges_s = subread_ranges_df.squeeze()
-        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
 
         if len(subreads_df) < args.min_depth:
             print(f"Skipping region {name} because depth is under the min threshold of {args.min_depth}.")
@@ -89,17 +101,24 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df = predict_region(subreads_df, args.min_region_depth, args.bin_size, args.num_stdev, args.verbose)
+        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_depth, args.candidate_offset_len, args.depth_delta_threshold, args.assigned_read_ratio_threshold, args.candidates_only, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
+        candidate_df = pd.concat([candidate_df, region_candidate_df], ignore_index=True)
 
     output_prefix = args.output_prefix
-    transcript_df = transcript_df.sort_values(by=["chr", "strand", "start"])
-    transcript_df.to_csv(f"{output_prefix}.bed", sep="\t", index=False, header=False)
 
-    annotation_df = annotation_df.sort_values(by=["seqid", "strand", "start"])
-    annotation_df.to_csv(f"{output_prefix}.gff3", sep="\t", index=False, header=False)
-    prepend_gff_version(f"{output_prefix}.gff3")
+    candidate_df = candidate_df.sort_values(by=["chr", "strand", "start"])
+    candidate_df.to_csv(f"{output_prefix}.candidates.bed", sep="\t", index=False, header=False)
+
+    if not args.candidates_only:
+        transcript_df = transcript_df.sort_values(by=["chr", "strand", "start"])
+        transcript_df.to_csv(f"{output_prefix}.bed", sep="\t", index=False, header=False)
+
+        annotation_df = annotation_df.sort_values(by=["seqid", "strand", "start"])
+        annotation_df.to_csv(f"{output_prefix}.gff3", sep="\t", index=False, header=False)
+        prepend_gff_version(f"{output_prefix}.gff3")
+
     exit()
 
 def prepend_gff_version(filename):
@@ -109,7 +128,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, num_stdev:float, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_depth:int, candidate_offset_len:int, depth_delta_threshold:int, assigned_read_ratio_threshold:float, only_candidates:bool, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -125,8 +144,9 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
     range_end = reads_df["end"].max()
     total_range_s = pd.Series(list(range(range_start, range_end)))
 
-    subtranscript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
+    subtranscript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)    # final predicted transcripts
     annotation_df = pd.DataFrame(columns=GFF_OUTPUT_COLS)
+    candidate_df = pd.DataFrame(columns=BED_OUTPUT_COLS)    # all candidate transcripts
 
     # If only one read in the region interval, that will be the de facto operon
     if len(reads_df) < 2:
@@ -138,6 +158,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         reads_s["score"] = "."
         reads_s["strand"] = orientation
         subtranscript_df.loc[len(subtranscript_df)] = reads_s
+        candidate_df.loc[len(candidate_df)] = reads_s
 
         gff_s = pd.Series(index=GFF_OUTPUT_COLS)
         gff_s["seqid"] = reads_s["chr"]
@@ -151,7 +172,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         gff_s["attributes"] = f"ID={operon_name}"
         annotation_df.loc[len(annotation_df)] = gff_s
 
-        return subtranscript_df, annotation_df
+        return subtranscript_df, annotation_df, candidate_df
 
     # Depth within distinct region
     if verbose:
@@ -191,6 +212,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         if len(new_regions) > 1:
             if verbose:
                 print(f"\t- Region split {split_counter}")
+                print(f"\t-- Range {local_start} - {local_end+1}")
             region_index = f"{orig_region_index}/{split_counter}"
             split_counter += 1
 
@@ -206,7 +228,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         reads_df = assign_reads_to_region(subread_ranges_s, region_reads_df)
         if reads_df.empty:
             if verbose:
-                print(f"\t- Removed subregion {region_index} as no reads were assigned to it.")
+                print(f"\t-- Removed subregion {region_index} as no reads were assigned to it.")
             continue
 
         # NOTE: Initially I thought if there was one region we should just keep original depth and ranges
@@ -216,20 +238,19 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         #print("DEPTH_DF")
         #print(depth_df)
 
-        # Get 1st and 2nd derivative information based on changes in depth
-        # 1st derivative is norm_delta
-        # Some depths will be higher than others, so this is normalized in "norm_derivative"
+        # Get 1st derivative information based on changes in depth
+        # 1st derivative is raw_delta
+        # Some depths will be higher than others, so this is normalized in "derivative"
         if verbose:
-            print("\t- Change of depth calculations")
+            print("\t-- Change of depth calculations")
         slope_df = create_slope_df(depth_df)
-        raw_depth_s = slope_df["raw_depth"]
 
-        # Filter by whatever excceds + and - standard deviation cutoff
-        filtered_slope_df = filter_slope_df_by_std(slope_df, num_stdev)
+        # Filter by whatever excceds absolute derivative threshold cutoff
+        filtered_slope_df = filter_slope_df_by_threshold(slope_df, depth_delta_threshold)
 
         # Build candidate start and stop regions. The entire region range can be considered a transcript
-        start_sites = get_candidate_starts(local_start, filtered_slope_df, bin_size)
-        end_sites = get_candidate_ends(local_start, filtered_slope_df, bin_size)
+        start_sites = get_candidate_starts(local_start, filtered_slope_df, candidate_offset_len)
+        end_sites = get_candidate_ends(local_start, filtered_slope_df, candidate_offset_len)
 
         # Determine candidate transcripts using every combination of start/stop bins
         cartesian_pos_sites = list(product(start_sites, end_sites))
@@ -240,38 +261,42 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
         #print("POSSIBLE TRANSCRIPTS DF")
         #print(possible_transcripts_df)
 
+        for row in possible_transcripts_df.itertuples():
+            operon_name = f"O_{region_index}_T{row.Index}"
+            start = row.start
+            end = row.end
+            score = "."
+            transcript_s = pd.Series([chromosome, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
+            transcript_s["name"] = operon_name
+            candidate_df.loc[len(candidate_df)] = transcript_s
+
+        if only_candidates:
+            return subtranscript_df, annotation_df, candidate_df
+
         if verbose:
-            print("\t- Assigning reads to candidate transcripts")
+            print("\t-- Assigning reads to candidate transcripts")
 
         if len(possible_transcripts_df) == 1 \
             and possible_transcripts_df.iloc[0]["start"] == local_start \
             and possible_transcripts_df.iloc[0]["end"] == local_end:
                 # if there is only one transcript and it spans the region, just use the region depth
                 # since all reads were assigned to this region already
-                transcript_id = "T_{}".format(possible_transcripts_df.iloc[0]["id"])
-                depth_subtranscripts_df = pd.DataFrame(subregion_range_s, columns=["rel_position"])
-                depth_subtranscripts_df[transcript_id] = depth_df["raw_depth"]
+                final_transcripts_dict = {possible_transcripts_df.iloc[0]["id"] : 1}
         else:
             # Generate each individual transcript depth and model them with domains
-            depth_subtranscripts_df = get_indiv_transcript_depths(reads_df, possible_transcripts_df, subregion_range_s)
+            final_transcripts_dict = get_indiv_transcript_depths(reads_df, possible_transcripts_df, subregion_range_s, assigned_read_ratio_threshold)
 
         if verbose:
-            print("\t- Create linear models")
-
-        linear_models_df = create_linear_models(possible_transcripts_df, depth_subtranscripts_df)
+            print("\t-- Create linear models")
 
         #print("LINEAR MODELS DF")
         #print(linear_models_df)
 
         if verbose:
-            print("\t- Predicting best candidate transcripts")
-
-        # Apply the linear model iteratively until a convergence happens, taking the best transcript at each step
-        # Output key - transcript, value - normalized error score
-        final_transcripts_dict = find_best_transcripts(linear_models_df, raw_depth_s, subregion_range_s)
+            print("\t-- Predicting best candidate transcripts")
 
         if verbose:
-            print("\t- Finalizing transcript list")
+            print("\t-- Finalizing transcript list")
 
         final_transcripts_df = possible_transcripts_df[possible_transcripts_df["id"].isin((list(final_transcripts_dict.keys())))].copy()
 
@@ -295,15 +320,12 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, bin_size:int, nu
             gff_s["phase"] = "."
             gff_s["attributes"] = f"ID={operon_name}"
             annotation_df.loc[len(annotation_df)] = gff_s
-    return subtranscript_df, annotation_df
+    return subtranscript_df, annotation_df, candidate_df
 
-def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s):
+def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s, assigned_read_ratio_threshold):
+    """Get positional depth for each candidate transcript after assigning reads to a single candidate."""
     reads_shinking_df = reads_df.copy()
-    depth_subtranscripts_df = pd.DataFrame(total_range_s, columns=["rel_position"])
-
-    # This is to prevent a PerformanceWarning in pandas where columns are repeatedly inserted into
-    # Source -> https://stackoverflow.com/a/75776863
-    depth_subtranscripts_dict = {}
+    final_transcripts = {}
 
     # Assign reads to transcript candidates to calculate depth and train model on it
     # ? Can we use a reducing command to shrink the reads_df
@@ -311,10 +333,11 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s
         # No reads left to assign
         if reads_shinking_df.empty:
             break
-        transcript_id = "T_{}".format(str(row.id))
         # Interior reads fall within the real start and end of a given transcript candidate
-        interior_reads_mask = (row.start <= reads_shinking_df["start"]) & (reads_shinking_df["end"] < row.end)
+        interior_reads_mask = (row.start <= reads_shinking_df["start"]) & (reads_shinking_df["end"] <= row.end)
+        interior_reads_all_mask = (row.start <= reads_df["start"]) & (reads_df["end"] <= row.end)
         interior_reads_df = reads_shinking_df[interior_reads_mask]
+        interior_reads_all_df = reads_df[interior_reads_all_mask]
         # Shrink the list of remaining reads
         reads_shinking_df = reads_shinking_df[~(reads_shinking_df["name"].isin(interior_reads_df["name"]))]
 
@@ -322,176 +345,62 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, total_range_s
         if interior_reads_df.empty:
             continue
 
-        # Calculate base depth just among interior reads for a transcript
+        ratio = len(interior_reads_df) / len(interior_reads_all_df)
 
-        # SLOW VERSION BUT USES LESS MEMORY
-        #raw_depth_list = [len(interior_reads_df[(interior_reads_df["start"] <= pos) & (pos < interior_reads_df["end"])]) for pos in depth_subtranscripts_df["rel_position"].to_list()]
-        #depth_subtranscripts_dict[transcript_id] = pd.Series(raw_depth_list)
-
-        # FAST VERSION BUT CAN BE MEMORY-INTENSIVE
-        depth_reads_df = pd.merge(depth_subtranscripts_df[["rel_position"]], interior_reads_df[["start", "end"]], how="cross")
-        depth_subtranscripts_dict[transcript_id] = pd.Series(get_raw_depth(depth_reads_df))
-
-
-    temp_df = pd.DataFrame(data=depth_subtranscripts_dict.values(), index=depth_subtranscripts_dict.keys()).transpose()
-    depth_subtranscripts_df = pd.concat([depth_subtranscripts_df, temp_df], axis="columns")
-    return depth_subtranscripts_df
-
-def find_best_transcripts(linear_models_df, raw_depth_s, total_range_s):
-    """Add each linear model stepwise until additions of the linear models do not improve the score."""
-    # Initial condition of linear model
-    linear_models_leftover_df = linear_models_df.copy()
-    depth_frame_df = pd.DataFrame(total_range_s, columns=["pos"])
-    depth_frame_df["depth"] = 0
-    depth_frame_df["actual_depth"] = raw_depth_s
-
-    final_transcripts = dict()
-
-    # If no more transcript candidates are left to process, break
-    while not linear_models_leftover_df.empty:
-        baseline_error = get_sum_of_squares(depth_frame_df["actual_depth"], depth_frame_df["depth"])
-        data = [{"id":row.id, "a":row.a, "b":row.b, "dstart":row.dstart, "dend":row.dend} for row in linear_models_leftover_df.itertuples()]
-        indiv_assessment_frame_df = pd.DataFrame(data, index=linear_models_leftover_df.index)
-
-        # Perform predictions for each transcript candidate
-        for row in indiv_assessment_frame_df.itertuples():
-            # ? could we use model.predict to get this instead?
-            predicted_frame_df = predict_linear_domain(row, total_range_s)
-            normalize_linear_domain_depth(depth_frame_df, predicted_frame_df)
-            indiv_assessment_frame_df.loc[row.Index, "sum_error"] = get_sum_of_squares(depth_frame_df["actual_depth"], predicted_frame_df["predicted_depth"])
-            indiv_assessment_frame_df.loc[row.Index, "depth_fraction"]  = len(predicted_frame_df[predicted_frame_df["depth"] > 0]) / len(predicted_frame_df)
-
-        # I think the idea here is that if "sum_error" -> "u", "baseline_error" -> "v" and coefficient of determination (R^2) -> 1 - u/v
-        # then a bad model would have a negative R^2 because the "sum_error" was worse than "baseline"
-
-        # Normalize, then keep all transcript models that are better than the baseline in terms of their prediction
-        indiv_assessment_frame_df["norm_error"] = (baseline_error - indiv_assessment_frame_df["sum_error"]) * indiv_assessment_frame_df["depth_fraction"]
-        indiv_assessment_frame_df = indiv_assessment_frame_df[indiv_assessment_frame_df["norm_error"] > 0]
-
-        # If no more transcript models pass error cutoff, exit
-        if indiv_assessment_frame_df.empty:
-            break
-
-        # Predict again on the best transcript model.
-        # Use this predicted depth as new baseline error for the next iteration
-        indiv_assessment_frame_df = indiv_assessment_frame_df.sort_values(by="norm_error", ascending=False)
-        best_transcript = indiv_assessment_frame_df.iloc[0]["id"]
-        final_transcripts[best_transcript] = indiv_assessment_frame_df.iloc[0]["norm_error"]
-
-        best_leftover_transcript_s = linear_models_leftover_df[linear_models_leftover_df["id"] == best_transcript].squeeze()
-
-        predicted_frame_df = predict_linear_domain(best_leftover_transcript_s, total_range_s)
-        normalize_linear_domain_depth(depth_frame_df, predicted_frame_df)
-        depth_frame_df["depth"] = predicted_frame_df["predicted_depth"]
-
-        linear_models_leftover_df = linear_models_leftover_df[~(linear_models_leftover_df["id"] == best_transcript)]
-
+        if ratio > assigned_read_ratio_threshold:
+            final_transcripts[row.id] = ratio
     return final_transcripts
 
-def get_candidate_ends(range_end, filtered_slope_df, bin_size):
+def get_candidate_ends(range_end, filtered_slope_df, candidate_offset_len):
     end_sites = {range_end}
     end_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == -1, "rel_position"].unique())
-    # Bin start and end sites to eliminate closely-grouped positions
-    sorted_ends = np.array(sorted(end_sites))
+    sorted_ends = np.array(sorted(end_sites, reverse=True))
     final_ends = set()
 
-    for pos in range(min(sorted_ends), max(sorted_ends)+1, bin_size):
-        bin_ends = sorted_ends[(pos <= sorted_ends) & (sorted_ends <= pos+bin_size)]
-        if len(bin_ends):
-            final_ends.add(np.max(bin_ends))
+    max_end = max(sorted_ends)
+    final_ends.add(max_end)
+
+    # Only take ends that are not close together
+    for pos in sorted_ends:
+        if pos + candidate_offset_len <= max_end:
+            max_end = pos
+            final_ends.add(max_end)
+
     return final_ends
 
-def get_candidate_starts(range_start, filtered_slope_df, bin_size):
+def get_candidate_starts(range_start, filtered_slope_df, candidate_offset_len):
     start_sites = {range_start}
     start_sites.update(filtered_slope_df.loc[filtered_slope_df["direction"] == 1, "rel_position"].unique())
-    # Bin start and end sites to eliminate closely-grouped positions
+
     sorted_starts = np.array(sorted(start_sites))
     final_starts = set()
 
-    for pos in range(min(sorted_starts), max(sorted_starts)+1, bin_size):
-        bin_starts = sorted_starts[(pos <= sorted_starts) & (sorted_starts <= pos+bin_size)]
-        if len(bin_starts):
-            final_starts.add(np.min(bin_starts))
+    min_start = min(sorted_starts)
+    final_starts.add(min_start)
+
+    # Only take starts that are not close together
+    for pos in sorted_starts:
+        if min_start + candidate_offset_len <= pos:
+            min_start = pos
+            final_starts.add(min_start)
+
     return final_starts
 
-def filter_slope_df_by_std(slope_df, num_stdev):
-    # Breaking the dataframe into positive and negative normalized derivatives
-    # NOTE: We are not filtering st dev away from the pos and neg means, but rather from 0
-    std_pos, std_neg = get_std(slope_df)
-    std_pos_filter = std_pos * num_stdev
-    std_pos_filter_mask = slope_df["norm_derivative"] >= std_pos_filter
-    std_neg_filter = std_neg * -num_stdev
-    std_neg_filter_mask = slope_df["norm_derivative"] <= std_neg_filter
-
-    filtered_slope_df = slope_df.loc[(std_pos_filter_mask) | (std_neg_filter_mask), ["rel_position", "direction"]]
-    return filtered_slope_df
-
-def get_std(slope_df):
-    pos_direction_mask = slope_df["norm_derivative"] > 0
-    neg_direction_mask = slope_df["norm_derivative"] < 0
-    slope_df["direction"] = 0
+def filter_slope_df_by_threshold(slope_df, threshold):
+    # Breaking the dataframe into positive and negative changes in depth
+    pos_direction_mask = slope_df["raw_delta"] > threshold
+    neg_direction_mask = slope_df["raw_delta"] < (-1 * threshold)
+    slope_df["direction"] = 0   # ? probably not necessary. Sanity-check addition
     slope_df.loc[pos_direction_mask, "direction"] = 1
     slope_df.loc[neg_direction_mask, "direction"] = -1
-    std_pos = slope_df.loc[pos_direction_mask, "norm_derivative"].std(skipna=True)
-    std_neg = slope_df.loc[neg_direction_mask, "norm_derivative"].std(skipna=True)
-    return std_pos, std_neg
-
-def create_linear_models( possible_transcripts_df, depth_subtranscripts_df):
-    linear_models_df = pd.DataFrame(columns=["id", "a", "b", "dstart", "dend"])
-    # Make linear models
-    for row in possible_transcripts_df.itertuples():
-        transcript_id = "T_{}".format(str(row.id))
-
-        # Do not want transcripts with no reads assigned
-        if transcript_id not in depth_subtranscripts_df.columns:
-            continue
-
-        # Filter regions where the bases are within the real start and end boundaries
-        rel_position_mask = (row.start <= depth_subtranscripts_df["rel_position"]) & (depth_subtranscripts_df["rel_position"] < row.end)
-
-        # Only train using transcripts with valid depth (log-transformed) and are within our region
-        modeling_depth_df = depth_subtranscripts_df[rel_position_mask].copy()
-        modeling_depth_df["log"] = 0
-        modeling_depth_df = modeling_depth_df[modeling_depth_df[transcript_id] > 0]
-        modeling_depth_df["log"] = np.log10(modeling_depth_df[transcript_id])
-
-        if modeling_depth_df.empty:
-            continue
-
-        # Fit linear model (independent x val, dependent y val) and store results in-place
-        # https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html#sklearn.linear_model.LinearRegression
-        # ! function "x" arg takes 2D array.
-        model.fit(modeling_depth_df[["rel_position"]], modeling_depth_df["log"])
-
-        # Linear mdel information for each candidate transcript
-        # NOTE: "a" and "b" based on y=ax+b
-        linear_models_df.loc[row.Index, "id"] = int(row.id)
-        linear_models_df.loc[row.Index, "a"] = model.coef_[0]
-        linear_models_df.loc[row.Index, "b"] = model.intercept_
-        linear_models_df.loc[row.Index, "dstart"] = row.start
-        linear_models_df.loc[row.Index, "dend"] = row.end
-    return linear_models_df
+    filtered_slope_df = slope_df.loc[~(slope_df["direction"] == 0), ["rel_position", "direction"]]
+    return filtered_slope_df
 
 def assign_reads_to_region(subread_ranges_s, reads_df):
     # Assign this read to a region
     # Read must fall within region boundaries and be in the same strand
     mask = (subread_ranges_s["start"] <= reads_df["start"]) & (reads_df["end"] <= subread_ranges_s["end"]) & (subread_ranges_s["strand"] == reads_df["strand"])
     return reads_df[mask]
-
-def calc_norm_range_sum(df:pd.DataFrame):
-    # This feels hacky. Need to return a series for the "apply" but switching to numpy loses the indexes
-    return pd.Series(df["sum_norm_slope"].abs() / df["sum_norm_slope"].abs().max(), index=df.index)
-
-def normalize_linear_domain_depth(depth_frame_df, predicted_frame_df):
-    # Adjust depth to be in line with scale of recorded actual depth by position
-    # NOTE: Edits DataFrame in-place
-    predicted_frame_df["predicted_depth"] = 10**predicted_frame_df["depth"]
-    predicted_frame_df.loc[predicted_frame_df["depth"] == 0, "predicted_depth"] = 0
-    predicted_frame_df["predicted_depth"] += depth_frame_df["depth"]
-
-def get_sum_of_squares(actual_depth:pd.Series, depth:pd.Series):
-    """Return residual sum of squares"""
-    return ((actual_depth - depth)**2).sum()
 
 def create_possible_transcripts_df(transcript_dict):
     possible_transcripts_df = pd.DataFrame(transcript_dict)
@@ -502,57 +411,31 @@ def create_possible_transcripts_df(transcript_dict):
     return possible_transcripts_df
 
 def create_slope_df(depth_df):
-    slope_df = depth_df[["transcript", "rel_position", "norm_depth", "raw_depth"]].sort_values(by="rel_position")
+    slope_df = depth_df[["transcript", "rel_position", "raw_depth"]].sort_values(by="rel_position")
     # Adding a 0-depth entry just beyond left-most area (https://stackoverflow.com/a/45466227)
-    slope_df.loc[-1] = [slope_df.loc[0, "transcript"], np.min(slope_df["rel_position"])-1, 0, 0]
+    slope_df.loc[-1] = [slope_df.loc[0, "transcript"], np.min(slope_df["rel_position"])-1, 0]
     slope_df.index = slope_df.index + 1
     slope_df = slope_df.sort_index()
     # Get the next position for the slope calculation (final row will be filled with 0)
     slope_df["next_raw_depth"] = slope_df["raw_depth"].shift(periods=-1).fillna(0)
-    slope_df["next_norm_depth"] = slope_df["norm_depth"].shift(periods=-1).fillna(0)
     # change between positions
-    slope_df["norm_delta"] = (slope_df["next_raw_depth"]/10 * slope_df["next_norm_depth"]) - (slope_df["raw_depth"]/10 * slope_df["norm_depth"])
-    # average norm depth between positions
-    slope_df["norm_split_depth"] = (slope_df["norm_depth"] + slope_df["next_norm_depth"]) / 2
+    slope_df["raw_delta"] = slope_df["next_raw_depth"] - slope_df["raw_depth"]
+    # average depth between positions
+    #slope_df["split_depth"] = (slope_df["next_raw_depth"] + slope_df["raw_depth"]) / 2
     # Normalizing change depending on the quantity of depth
-    slope_df["norm_derivative"] = slope_df["norm_delta"] / slope_df["norm_split_depth"]
+    #slope_df["derivative"] = slope_df["raw_delta"] / slope_df["split_depth"]
     slope_df = slope_df.dropna()
-    return slope_df
+
+    # Exclude positions with no depth (incl. out-of-region ones introduced at top of function)
+    depth_filter_mask = slope_df["raw_depth"] > 0
+    return slope_df[depth_filter_mask]
 
 def create_depth_df(reads_df:pd.DataFrame, total_range_s:pd.Series):
     depth_df = pd.DataFrame(total_range_s, columns=["rel_position"])
     depth_df["transcript"] = reads_df["chr"].unique()[0]    # Since we grouped by chromosome, all reads should be in same chromosome
     raw_depth_list = [len(reads_df[(reads_df["start"] <= pos) & (pos < reads_df["end"])]) for pos in depth_df["rel_position"].tolist()]
     depth_df["raw_depth"] = pd.Series(raw_depth_list)
-
-    # normalized depth
-    depth_df["norm_depth"] = depth_df["raw_depth"] / max(depth_df["raw_depth"])
     return depth_df
-
-def get_raw_depth(depth_reads_df):
-    """Return depth for this particular base (number of reads with this base in its interval)."""
-    # depth_reads_df is from a cross merge of depth_df and reads_df
-    depth_reads_df["in_range"] = depth_reads_df["rel_position"].between(depth_reads_df["start"], depth_reads_df["end"], inclusive="left")
-    return depth_reads_df.groupby("rel_position")["in_range"].sum().to_list()  # to list, otherwise indexes don't match
-
-def predict_linear_domain(transcript_s, total_range_s):
-    """Evaluate depth for each position in the region using this transcript's linear model"""
-    # row - dstart/dend - transcript domain region
-    # range_start/range_end - distinct region range
-    # row - a - coefficient
-    # row - b - y-intercept
-
-    depth_frame_df = pd.DataFrame(total_range_s, columns=["rel_position"])
-    depth_frame_df["depth"] = 0
-
-    # NOTE: Explored using sckit-learn LinearRegression.predict, but it was slightly slower due to extra checks
-    depth_frame_df["in_range"] = depth_frame_df["rel_position"].between(transcript_s.dstart, transcript_s.dend, inclusive="left")
-    in_range_df = depth_frame_df[depth_frame_df["in_range"]]
-
-    # prediction is y = ax + b
-    depth_frame_df.loc[depth_frame_df["in_range"], "depth"] = (in_range_df["rel_position"] * transcript_s.a) + transcript_s.b
-    return depth_frame_df
-
 
 if __name__ == '__main__':
     main()
