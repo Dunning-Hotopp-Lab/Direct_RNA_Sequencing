@@ -39,13 +39,13 @@ def main():
     parser.add_argument('-c', '--chromosome', type=str, required=False, help='Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
     parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
-    parser.add_argument('--min_region_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
+    parser.add_argument('--min_region_positional_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
     parser.add_argument("--candidate_offset_len", type=int, default=100, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
     parser.add_argument("--depth_delta_threshold", type=int, default=4, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
     parser.add_argument("--candidate_read_threshold", type=int, default=2, help="If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript.")
     parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio.")
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
-    parser.add_argument("--candidates_only", action="store_true", help="If enabled, skip the linear-model fitting step for the candidate transcripts and print out the candidate transcripts only")
+    parser.add_argument("--candidates_only", action="store_true", help="If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only")
     parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
     args = parser.parse_args()
 
@@ -104,7 +104,7 @@ def main():
         if args.verbose:
             print(f"REGION {name}")
 
-        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_depth, args.candidate_offset_len, args.depth_delta_threshold, args.candidate_read_threshold, args.assigned_read_ratio_threshold, args.candidates_only, args.verbose)
+        region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_positional_depth, args.candidate_offset_len, args.depth_delta_threshold, args.candidate_read_threshold, args.assigned_read_ratio_threshold, args.candidates_only, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
         annotation_df = pd.concat([annotation_df, region_annotation_df], ignore_index=True)
         candidate_df = pd.concat([candidate_df, region_candidate_df], ignore_index=True)
@@ -131,7 +131,7 @@ def prepend_gff_version(filename):
         f.seek(0, 0)
         f.write("##gff-version 3\n")
 
-def predict_region(reads_df:pd.DataFrame, min_region_depth:int, candidate_offset_len:int, depth_delta_threshold:int, candidate_read_threshold:int, assigned_read_ratio_threshold:float, only_candidates:bool, verbose:bool):
+def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candidate_offset_len:int, depth_delta_threshold:int, candidate_read_threshold:int, assigned_read_ratio_threshold:float, only_candidates:bool, verbose:bool):
     # Each region belongs to a single chromosome and strand
     chromosome = reads_df["chr"].unique()[0]
     orientation = reads_df["strand"].unique()[0]
@@ -185,8 +185,8 @@ def predict_region(reads_df:pd.DataFrame, min_region_depth:int, candidate_offset
     # Filter any low-quality parts of the region
     # For now, I am including the extreme ends as it is easier to code
     # Also we only will do this once.
-    good_region_depth_df = depth_df[depth_df["raw_depth"] >= min_region_depth].reset_index()
-    bad_region_depth_df = depth_df[~(depth_df["raw_depth"] >= min_region_depth)].reset_index()
+    good_region_depth_df = depth_df[depth_df["raw_depth"] >= min_region_positional_depth].reset_index()
+    bad_region_depth_df = depth_df[~(depth_df["raw_depth"] >= min_region_positional_depth)].reset_index()
     reads_to_rm_df = pd.DataFrame(columns=reads_df.columns)
     # Find all reads to remove
     for pos in bad_region_depth_df["rel_position"]:

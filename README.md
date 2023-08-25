@@ -22,7 +22,7 @@ If you are using Docker to run the tool then the command would instead be `docke
 
 ```text
 usage: rdoperon.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH]
-                   [--min_region_depth MIN_REGION_DEPTH] [--candidate_offset_len CANDIDATE_OFFSET_LEN]
+                   [--min_region_positional_depth MIN_REGION_POSITIONAL_DEPTH] [--candidate_offset_len CANDIDATE_OFFSET_LEN]
                    [--depth_delta_threshold DEPTH_DELTA_THRESHOLD] [--assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD]
                    [-o OUTPUT_PREFIX] [--candidates_only] [-v]
 
@@ -40,7 +40,7 @@ options:
                         Minimum required depth for a distinct region to find candidate transcripts.
   --max_depth MAX_DEPTH
                         Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
-  --min_region_depth MIN_REGION_DEPTH
+  --min_region_positional_depth MIN_REGION_DEPTH
                         Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed
                         and new distinct subregions are created from the remaining runs of positions.
   --candidate_offset_len CANDIDATE_OFFSET_LEN
@@ -56,8 +56,7 @@ options:
                         transcripts that exceed this ratio.
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
                         Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
-  --candidates_only     If enabled, skip the linear-model fitting step for the candidate transcripts and print out the candidate transcripts
-                        only
+  --candidates_only     If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only
   -v, --verbose         If enabled, print detailed step progress.
 
 --reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)
