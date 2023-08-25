@@ -49,8 +49,10 @@ options:
   --depth_delta_threshold DEPTH_DELTA_THRESHOLD
                         If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start
                         or stop site.
+  --candidate_read_threshold CANDIDATE_READ_THRESHOLD
+                        If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript.
   --assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD
-                        The ratio of reads assigned solely to a candidate transcript to all assigned reads to the same transcript. Keep
+                        The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep
                         transcripts that exceed this ratio.
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
                         Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
