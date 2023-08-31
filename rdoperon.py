@@ -51,7 +51,7 @@ def main():
 
     if args.min_depth < 0:
         sys.exit("--min_depth cannot be less than 0. Exiting")
-    if args.max_depth < 1:
+    if args.max_depth and args.max_depth < 1:
         sys.exit("--max_depth cannot be less than 1. Exiting")
     if args.depth_delta_threshold < 0:
         sys.exit("--depth_delta_threshold cannot be less than 0. Exiting")
