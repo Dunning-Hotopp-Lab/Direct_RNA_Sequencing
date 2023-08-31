@@ -342,7 +342,7 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, candidate_rea
         interior_reads_df = reads_shinking_df[interior_reads_mask]
         interior_reads_all_df = reads_df[interior_reads_all_mask]
 
-        if len(candidate_read_threshold) < candidate_read_threshold:
+        if len(interior_reads_all_df) < candidate_read_threshold:
             continue
 
         # Shrink the list of remaining reads
