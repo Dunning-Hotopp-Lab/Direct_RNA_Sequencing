@@ -8,11 +8,9 @@ and filter alternative transcripts that could make use of various start/stop com
 """
 
 import argparse, sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import LinearRegression
-from sklearn.linear_model import PoissonRegressor
 from itertools import product
 
 # Prevent warnings about parameter validation from popping up when computing the score
@@ -61,6 +59,8 @@ def main():
         sys.exit("--assigned_read_ratio_threshold most be between 0 and 1. Exiting")
 
     distinct_ranges = args.ranges_bed
+    if not Path(distinct_ranges).is_file():
+        sys.exit(f"File does not exist for --ranges_bed={distinct_ranges}. Exiting")
     dr_cols = ["chr","start","end", "strand"]
     distinct_ranges_df = pd.read_csv(distinct_ranges, sep="\t", header=None, names=dr_cols, usecols=[0,1,2,3])
     # Sorting is not necessary for this output
@@ -68,6 +68,8 @@ def main():
     distinct_ranges_df["region"] = distinct_ranges_df.index
 
     reads_file = args.reads_bed
+    if not Path(reads_file).is_file():
+        sys.exit(f"File does not exist for --reads_bed={distinct_ranges}. Exiting")
     reads_cols = ["chr","start","end","name","score","strand"]
     reads_df = pd.read_csv(reads_file,  sep="\t", header=None, names=reads_cols, usecols=[0,1,2,3,4,5])
     reads_df = reads_df.sort_values(by=["chr", "strand", "start"]).reset_index(drop=True)
