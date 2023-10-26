@@ -292,15 +292,6 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
             final_transcripts_dict = get_indiv_transcript_depths(reads_df, possible_transcripts_df, candidate_read_threshold, assigned_read_ratio_threshold)
 
         if verbose:
-            print("\t-- Create linear models")
-
-        #print("LINEAR MODELS DF")
-        #print(linear_models_df)
-
-        if verbose:
-            print("\t-- Predicting best candidate transcripts")
-
-        if verbose:
             print("\t-- Finalizing transcript list")
 
         final_transcripts_df = possible_transcripts_df[possible_transcripts_df["id"].isin((list(final_transcripts_dict.keys())))].copy()
@@ -339,17 +330,14 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, candidate_rea
         if reads_shinking_df.empty:
             break
         # Interior reads fall within the real start and end of a given transcript candidate
-        interior_reads_mask = (row.start <= reads_shinking_df["start"]) & (reads_shinking_df["end"] <= row.end)
         interior_reads_all_mask = (row.start <= reads_df["start"]) & (reads_df["end"] <= row.end)
-        interior_reads_df = reads_shinking_df[interior_reads_mask]
         interior_reads_all_df = reads_df[interior_reads_all_mask]
-
         if len(interior_reads_all_df) < candidate_read_threshold:
             continue
 
-        # Shrink the list of remaining reads
-        reads_shinking_df = reads_shinking_df[~(reads_shinking_df["name"].isin(interior_reads_df["name"]))]
-
+        # This set of interior reads only comes from the remaining unassigned reads
+        interior_reads_mask = (row.start <= reads_shinking_df["start"]) & (reads_shinking_df["end"] <= row.end)
+        interior_reads_df = reads_shinking_df[interior_reads_mask]
         # No interior reads assigned to this transcript
         if interior_reads_df.empty:
             continue
@@ -358,6 +346,11 @@ def get_indiv_transcript_depths(reads_df, possible_transcripts_df, candidate_rea
 
         if ratio > assigned_read_ratio_threshold:
             final_transcripts[row.id] = ratio
+            # Shrink the list of remaining reads
+            reads_shinking_df = reads_shinking_df[~(reads_shinking_df["name"].isin(interior_reads_df["name"]))]
+
+        # If the ratio is below the threshold, we will not assign any reads to this transcript,
+        # so they can be potentially used for longer transcripts
     return final_transcripts
 
 def get_candidate_ends(range_end, filtered_slope_df, candidate_offset_len):
