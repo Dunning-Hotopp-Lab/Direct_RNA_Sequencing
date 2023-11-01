@@ -131,7 +131,7 @@ def prepend_gff_version(filename):
     with open(filename, 'r+') as f:
         content = f.read()
         f.seek(0, 0)
-        f.write("##gff-version 3\n")
+        f.write(f"##gff-version 3\n{content}")
 
 def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candidate_offset_len:int, depth_delta_threshold:int, candidate_read_threshold:int, assigned_read_ratio_threshold:float, only_candidates:bool, verbose:bool):
     # Each region belongs to a single chromosome and strand
