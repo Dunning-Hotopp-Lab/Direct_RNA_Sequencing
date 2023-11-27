@@ -13,11 +13,6 @@ import numpy as np
 import pandas as pd
 from itertools import product
 
-# Prevent warnings about parameter validation from popping up when computing the score
-# Available in v1.3
-#import sklearn
-#sklearn.set_config(skip_parameter_validation = False)
-
 BED_OUTPUT_COLS = ["chr","start","end","name","score","strand"]
 GFF_OUTPUT_COLS = ["seqid", "source", "type", "start", "end", "score", "strand", "phase", "attributes"]
 
@@ -182,6 +177,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
     # Depth within distinct region
     if verbose:
         print("\t- Region depth calculations")
+
     depth_df = create_depth_df(reads_df[["chr", "start", "end"]], total_range_s)
 
     # Filter any low-quality parts of the region
@@ -401,7 +397,7 @@ def filter_slope_df_by_threshold(slope_df, threshold):
 def assign_reads_to_region(subread_ranges_s, reads_df):
     # Assign this read to a region
     # Read must fall within region boundaries and be in the same strand
-    mask = (subread_ranges_s["start"] <= reads_df["start"]) & (reads_df["end"] <= subread_ranges_s["end"]) & (subread_ranges_s["strand"] == reads_df["strand"])
+    mask = (subread_ranges_s["chr"] == reads_df["chr"]) & (subread_ranges_s["strand"] == reads_df["strand"]) & (subread_ranges_s["start"] <= reads_df["start"]) & (reads_df["end"] <= subread_ranges_s["end"])
     return reads_df[mask]
 
 def create_possible_transcripts_df(transcript_dict):
