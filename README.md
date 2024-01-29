@@ -1,6 +1,6 @@
 # Direct_RNA_Sequencing
 
-## RDOperon
+## TP (Transcript Prediction)
 
 Python 3.8 and later are supported. This was tested using Python 3.11.3
 
@@ -12,21 +12,21 @@ You can install the required dependencies by running `python3 -m pip install -r 
 
 #### Route 2 - Docker
 
-You can also use the provided Dockerfile to build a Docker image to run the tool in. To build the Docker image, run `docker build -t rdoperon .`
+You can also use the provided Dockerfile to build a Docker image to run the tool in. To build the Docker image, run `docker build -t tp .`
 
 ### Running the tool
 
-The general command is `python3 rdoperon.py <options>`
+The general command is `python3 tp.py <options>`
 
-If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app rdoperon <options>`
+If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app tp <options>`
 
 ```text
-usage: rdoperon.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH]
+usage: tp.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH]
                    [--min_region_positional_depth MIN_REGION_POSITIONAL_DEPTH] [--candidate_offset_len CANDIDATE_OFFSET_LEN]
                    [--depth_delta_threshold DEPTH_DELTA_THRESHOLD] [--assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD]
                    [-o OUTPUT_PREFIX] [--candidates_only] [-v]
 
-Predict operons based on a finding candidate start/stop sites, and filter alternative transcripts that could make use of various start/stop combinations.
+Predict transcripts based on a finding candidate start/stop sites, and filter alternative transcripts that could make use of various start/stop combinations.
 
 options:
   -h, --help            show this help message and exit
@@ -44,7 +44,7 @@ options:
                         Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed
                         and new distinct subregions are created from the remaining runs of positions.
   --candidate_offset_len CANDIDATE_OFFSET_LEN
-                        Some of the operon transcript candidates may have very close start or end coordinates. When encountering a start or end
+                        Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end
                         coordinate, ensure the next candidate position is at minimum <offset_length> bases away.
   --depth_delta_threshold DEPTH_DELTA_THRESHOLD
                         If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start

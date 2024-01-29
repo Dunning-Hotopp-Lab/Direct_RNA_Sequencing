@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-"""rdoperon.py (working name)
+"""tp.py (Transcript Prediction)
 
-Predict operons based on a finding candidate start/stop sites,
+Predict transcripts based on a finding candidate start/stop sites,
 and filter alternative transcripts that could make use of various start/stop combinations
 
 """
@@ -18,7 +18,7 @@ GFF_OUTPUT_COLS = ["seqid", "source", "type", "start", "end", "score", "strand",
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Predict operons based on a finding candidate start/stop sites," \
+        description="Predict transcripts based on a finding candidate start/stop sites," \
             " and filter alternative transcripts that could make use of various start/stop combinations."
         , epilog="--reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)\n" \
             "--ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)\n\n" \
@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
     parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
     parser.add_argument('--min_region_positional_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
-    parser.add_argument("--candidate_offset_len", type=int, default=100, required=False, help="Some of the operon transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
+    parser.add_argument("--candidate_offset_len", type=int, default=100, required=False, help="Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
     parser.add_argument("--depth_delta_threshold", type=int, default=4, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
     parser.add_argument("--candidate_read_threshold", type=int, default=2, help="If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript.")
     parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio.")
@@ -148,13 +148,13 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
     annotation_df = pd.DataFrame(columns=GFF_OUTPUT_COLS)
     candidate_df = pd.DataFrame(columns=BED_OUTPUT_COLS)    # all candidate transcripts
 
-    # If only one read in the region interval, that will be the de facto operon
+    # If only one read in the region interval, that will be the de facto transcript
     if len(reads_df) < 2:
-        operon_name = f"O_{region_index}_T1"
+        transcript_name = f"R_{region_index}_T1"
         reads_s = reads_df[["chr", "start", "end"]].squeeze()
         reads_s["start"] = range_start
         reads_s["end"] = range_end
-        reads_s["name"] = operon_name
+        reads_s["name"] = transcript_name
         reads_s["score"] = "."
         reads_s["strand"] = orientation
         subtranscript_df.loc[len(subtranscript_df)] = reads_s
@@ -162,14 +162,14 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
 
         gff_s = pd.Series(index=GFF_OUTPUT_COLS)
         gff_s["seqid"] = reads_s["chr"]
-        gff_s["source"] = "rdoperon.py"
+        gff_s["source"] = "tp.py"
         gff_s["type"] = "transcript"
         gff_s["start"] = range_start + 1  # GFF3 are 1-indexed
         gff_s["end"] = range_end   # inclusive
         gff_s["score"] = 0
         gff_s["strand"] = orientation
         gff_s["phase"] = "."
-        gff_s["attributes"] = f"ID={operon_name}"
+        gff_s["attributes"] = f"ID={transcript_name}"
         annotation_df.loc[len(annotation_df)] = gff_s
 
         return subtranscript_df, annotation_df, candidate_df
@@ -263,12 +263,12 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
         #print(possible_transcripts_df)
 
         for row in possible_transcripts_df.itertuples():
-            operon_name = f"O_{region_index}_T{row.Index}"
+            transcript_name = f"R_{region_index}_T{row.Index}"
             start = row.start
             end = row.end
             score = "."
-            transcript_s = pd.Series([chromosome, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
-            transcript_s["name"] = operon_name
+            transcript_s = pd.Series([chromosome, start, end, transcript_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
+            transcript_s["name"] = transcript_name
             candidate_df.loc[len(candidate_df)] = transcript_s
 
         if only_candidates:
@@ -293,24 +293,24 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
         final_transcripts_df = possible_transcripts_df[possible_transcripts_df["id"].isin((list(final_transcripts_dict.keys())))].copy()
 
         for row in final_transcripts_df.itertuples():
-            operon_name = f"O_{region_index}_T{row.Index}"
+            transcript_name = f"R_{region_index}_T{row.Index}"
             start = row.start
             end = row.end
             score = "."
-            transcript_s = pd.Series([chromosome, start, end, operon_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
-            transcript_s["name"] = operon_name
+            transcript_s = pd.Series([chromosome, start, end, transcript_name, score, orientation], index=["chr", "start", "end", "name",  "score", "strand"])
+            transcript_s["name"] = transcript_name
             subtranscript_df.loc[len(subtranscript_df)] = transcript_s
 
             gff_s = pd.Series(index=GFF_OUTPUT_COLS)
             gff_s["seqid"] = chromosome
-            gff_s["source"] = "rdoperon.py"
+            gff_s["source"] = "tp.py"
             gff_s["type"] = "transcript"
             gff_s["start"] = start + 1  # GFF3 are 1-indexed
             gff_s["end"] = end  # inclusive
             gff_s["score"] = round(final_transcripts_dict[row.Index], 2)
             gff_s["strand"] = orientation
             gff_s["phase"] = "."
-            gff_s["attributes"] = f"ID={operon_name}"
+            gff_s["attributes"] = f"ID={transcript_name}"
             annotation_df.loc[len(annotation_df)] = gff_s
     return subtranscript_df, annotation_df, candidate_df
 
