@@ -5,6 +5,10 @@
 Predict transcripts based on a finding candidate start/stop sites,
 and filter alternative transcripts that could make use of various start/stop combinations
 
+Version 1.0
+
+Shaun Adkins - sadkins@som.umaryland.edu
+
 """
 
 import argparse, sys
