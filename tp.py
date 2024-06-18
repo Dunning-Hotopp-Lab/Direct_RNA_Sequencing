@@ -31,20 +31,26 @@ def main():
             "The third output file is a 9-column GFF3 file of the same contents from the second BED file. The 'score' column is the normalized score from predicting the best transcripts for a region."
         , formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('-r', '--reads_bed', type=str, required=True, help='Path to a position-sorted BED file of reads.')
-    parser.add_argument('-d', '--ranges_bed', type=str, required=True, help="Path to a BED file of distict non-overlapping interval ranges per strand")
-    parser.add_argument('-c', '--chromosome', type=str, required=False, help='Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
-    parser.add_argument('--min_depth', type=int, default=1, required=False, help='Minimum required depth for a distinct region to find candidate transcripts.')
-    parser.add_argument('--max_depth', type=int, required=False, help='Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
-    parser.add_argument('--min_region_positional_depth', type=int, default=2, required=False, help='Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions.')
-    parser.add_argument("--candidate_offset_len", type=int, default=100, required=False, help="Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away.")
-    parser.add_argument("--depth_delta_threshold", type=int, default=4, help="If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site.")
-    parser.add_argument("--candidate_read_threshold", type=int, default=2, help="If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript.")
-    parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio.")
-    parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames")
-    parser.add_argument("--candidates_only", action="store_true", help="If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only")
-    parser.add_argument("-v", "--verbose", action="store_true", help="If enabled, print detailed step progress.")
+    parser.add_argument('-r', '--reads_bed', type=str, required=True, help='(Required) Path to a position-sorted BED file of reads.')
+    parser.add_argument('-d', '--ranges_bed', type=str, required=True, help="(Required) Path to a BED file of distict non-overlapping interval ranges per strand")
+    parser.add_argument('-c', '--chromosome', type=str, required=False, help='(Optional) Specific check on a chromsome ID. If not provided, will loop over all chromosomes')
+    parser.add_argument('--min_depth', type=int, default=1, required=False, help='(Optional) Minimum required depth for a distinct region to find candidate transcripts. Default: %(default)s')
+    parser.add_argument('--max_depth', type=int, required=False, help='(Optional) Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.')
+    parser.add_argument('--min_region_positional_depth', type=int, default=2, required=False, help='(Optional) Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are created from the remaining runs of positions. Default: %(default)s')
+    parser.add_argument("--candidate_offset_len", type=int, default=100, required=False, help="(Optional) Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate position is at minimum <offset_length> bases away. Default: %(default)s")
+    parser.add_argument("--depth_delta_threshold", type=int, default=4, help="(Optional) If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site. Default: %(default)s")
+    parser.add_argument("--candidate_read_threshold", type=int, default=2, help="(Optional) If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript. Default: %(default)s")
+    parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="(Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio. Default: %(default)s")
+    parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="(Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: %(default)s")
+    parser.add_argument("--candidates_only", action="store_true", help="(Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only")
+    parser.add_argument("-v", "--verbose", action="store_true", help="(Optional) If enabled, print detailed step progress.")
     args = parser.parse_args()
+
+    # pretty-print the arguments
+    if args.verbose:
+        print("Arguments:")
+        for arg in vars(args):
+            print(f"\t{arg}: {getattr(args, arg)}")
 
     if args.min_depth < 0:
         sys.exit("--min_depth cannot be less than 0. Exiting")

@@ -31,33 +31,32 @@ Predict transcripts based on a finding candidate start/stop sites, and filter al
 options:
   -h, --help            show this help message and exit
   -r READS_BED, --reads_bed READS_BED
-                        Path to a position-sorted BED file of reads.
+                        (Required) Path to a position-sorted BED file of reads.
   -d RANGES_BED, --ranges_bed RANGES_BED
-                        Path to a BED file of distict non-overlapping interval ranges per strand
+                        (Required) Path to a BED file of distict non-overlapping interval ranges per strand
   -c CHROMOSOME, --chromosome CHROMOSOME
-                        Specific check on a chromsome ID. If not provided, will loop over all chromosomes
+                        (Optional) Specific check on a chromsome ID. If not provided, will loop over all chromosomes
   --min_depth MIN_DEPTH
-                        Minimum required depth for a distinct region to find candidate transcripts.
+                        (Optional) Minimum required depth for a distinct region to find candidate transcripts. Default: 1
   --max_depth MAX_DEPTH
-                        Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
-  --min_region_positional_depth MIN_REGION_DEPTH
-                        Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed
-                        and new distinct subregions are created from the remaining runs of positions.
+                        (Optional) Maximum required depth for a distinct region to find candidate transcripts. If not set, max threshold is disabled.
+  --min_region_positional_depth MIN_REGION_POSITIONAL_DEPTH
+                        (Optional) Minimum required positional depth within a region. Reads mapping to positions that are below this threshold are tossed and new distinct subregions are
+                        created from the remaining runs of positions. Default: 2
   --candidate_offset_len CANDIDATE_OFFSET_LEN
-                        Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end
-                        coordinate, ensure the next candidate position is at minimum <offset_length> bases away.
+                        (Optional) Some of the transcript candidates may have very close start or end coordinates. When encountering a start or end coordinate, ensure the next candidate
+                        position is at minimum <offset_length> bases away. Default: 100
   --depth_delta_threshold DEPTH_DELTA_THRESHOLD
-                        If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start
-                        or stop site.
+                        (Optional) If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site. Default: 4
   --candidate_read_threshold CANDIDATE_READ_THRESHOLD
-                        If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript.
+                        (Optional) If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript. Default: 2
   --assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD
-                        The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep
-                        transcripts that exceed this ratio.
+                        (Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio.
+                        Default: 0.2
   -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
-                        Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames
-  --candidates_only     If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only
-  -v, --verbose         If enabled, print detailed step progress.
+                        (Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: all_transcripts
+  --candidates_only     (Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only
+  -v, --verbose         (Optional) If enabled, print detailed step progress.
 
 --reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)
 --ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)
