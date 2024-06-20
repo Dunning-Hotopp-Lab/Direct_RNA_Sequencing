@@ -212,6 +212,11 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
 
     orig_region_index = region_index
     for region_arr in new_regions:
+        # If region_arr is empty, skip
+        # np.split will occasionally add an empty array at the end
+        if not len(region_arr):
+            continue
+
         # Update region start and end based on the good positions
         local_start = np.min(region_arr)
         local_end = np.max(region_arr)
@@ -311,7 +316,7 @@ def predict_region(reads_df:pd.DataFrame, min_region_positional_depth:int, candi
             transcript_s["name"] = transcript_name
             subtranscript_df.loc[len(subtranscript_df)] = transcript_s
 
-            gff_s = pd.Series(index=GFF_OUTPUT_COLS)
+            gff_s = pd.Series(index=GFF_OUTPUT_COLS, dtype=object)  # sometimes the dtype is not set correctly
             gff_s["seqid"] = chromosome
             gff_s["source"] = "tp.py"
             gff_s["type"] = "transcript"
