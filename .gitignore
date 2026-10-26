@@ -1,0 +1,11 @@
+orig_outputs/**
+all_transcripts.tsv
+combinedRanges.tsv
+*.R
+ReadList.tsv
+operon_prediction.py
+*.bed
+*.gff*
+*.jpeg
+.DS_Store
+Operon_setup.sh
