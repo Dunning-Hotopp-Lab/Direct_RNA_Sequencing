@@ -10,6 +10,8 @@ Python 3.8 and later are supported. This was tested using Python 3.11.3
 
 You can install the required dependencies by running `python3 -m pip install -r requirements.txt`
 
+Alternatively, run `python3 -m pip install .` from the repository root to install the tool and its dependencies. This adds a `tp.py` command to your PATH.
+
 #### Route 2 - Docker
 
 You can also use the provided Dockerfile to build a Docker image to run the tool in. To build the Docker image, run `docker build -t tp .`

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.2
+
+* Adding pyproject.toml so the tool can be installed with pip (installs a `tp.py` command)
+* Adding --version option
+* Removing unused scikit-learn dependency
+
 ## v1.0.1
 
 * Adding default values to help text

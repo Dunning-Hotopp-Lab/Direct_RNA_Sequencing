@@ -5,11 +5,13 @@
 Predict transcripts based on a finding candidate start/stop sites,
 and filter alternative transcripts that could make use of various start/stop combinations
 
-Version 1.0
+Version 1.0.2
 
 Shaun Adkins - sadkins@som.umaryland.edu
 
 """
+
+__version__ = "1.0.2"
 
 import argparse, sys
 from pathlib import Path
@@ -44,6 +46,7 @@ def main():
     parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="(Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: %(default)s")
     parser.add_argument("--candidates_only", action="store_true", help="(Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only")
     parser.add_argument("-v", "--verbose", action="store_true", help="(Optional) If enabled, print detailed step progress.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
     # pretty-print the arguments
