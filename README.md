@@ -2,7 +2,7 @@
 
 ## TP (Transcript Prediction)
 
-Python 3.8 and later are supported. This was tested using Python 3.11.3
+Python 3.9 and later are supported. This was tested using Python 3.11.3
 
 ### Installation
 
