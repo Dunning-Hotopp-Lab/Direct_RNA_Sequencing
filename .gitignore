@@ -1,3 +1,4 @@
+# Artifacts from developing this tool
 orig_outputs/**
 all_transcripts.tsv
 combinedRanges.tsv
