@@ -5,13 +5,13 @@
 Predict transcripts based on a finding candidate start/stop sites,
 and filter alternative transcripts that could make use of various start/stop combinations
 
-Version 1.0.2
+Version 1.0.3
 
 Shaun Adkins - sadkins@som.umaryland.edu
 
 """
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 import argparse, sys
 from pathlib import Path

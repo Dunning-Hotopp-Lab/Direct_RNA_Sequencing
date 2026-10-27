@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.3
+
+* Renaming the pip package from `tp` to `drs-transcript-prediction`
+
 ## v1.0.2
 
 * Adding pyproject.toml so the tool can be installed with pip (installs a `tp.py` command)
