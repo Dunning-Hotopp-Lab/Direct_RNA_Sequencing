@@ -13,6 +13,9 @@ license-files = ["LICENSE"]
 authors = [{name = "Shaun Adkins", email = "sadkins@som.umaryland.edu"}]
 dependencies = ["numpy>=1.20", "pandas>=2.0"]
 
+[project.scripts]
+drs-transcript-prediction = "tp:main"
+
 [project.urls]
 Homepage = "https://github.com/Dunning-Hotopp-Lab/Direct_RNA_Sequencing"
 
