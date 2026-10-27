@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+* Documenting the `drs-transcript-prediction` command in the README
+
 ## v1.0.4
 
 * Adding `drs-transcript-prediction` command as an alternative to `tp.py`

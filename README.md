@@ -10,7 +10,7 @@ Python 3.9 and later are supported. This was tested using Python 3.11.3
 
 You can install the required dependencies by running `python3 -m pip install -r requirements.txt`
 
-Alternatively, run `python3 -m pip install .` from the repository root to install the tool and its dependencies. This adds a `tp.py` command to your PATH.
+Alternatively, run `python3 -m pip install .` from the repository root to install the tool and its dependencies. This adds two equivalent commands to your PATH: `tp.py` and `drs-transcript-prediction`.
 
 #### Route 2 - Docker
 
@@ -19,6 +19,8 @@ You can also use the provided Dockerfile to build a Docker image to run the tool
 ### Running the tool
 
 The general command is `python3 tp.py <options>`
+
+If you installed the tool with `python3 -m pip install .`, you can instead run `tp.py <options>` or `drs-transcript-prediction <options>`.
 
 If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app tp <options>`
 
