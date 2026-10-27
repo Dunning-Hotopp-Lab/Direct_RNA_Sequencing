@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.4
+
+* Adding `drs-transcript-prediction` command as an alternative to `tp.py`
+
 ## v1.0.3
 
 * Renaming the pip package from `tp` to `drs-transcript-prediction`
