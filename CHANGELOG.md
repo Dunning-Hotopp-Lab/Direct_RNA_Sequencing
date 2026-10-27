@@ -3,6 +3,7 @@
 ## Unreleased
 
 * Documenting the `drs-transcript-prediction` command in the README
+* Refreshing the README help text (adds `--version` and `--candidate_read_threshold` to the usage line)
 
 ## v1.0.4
 

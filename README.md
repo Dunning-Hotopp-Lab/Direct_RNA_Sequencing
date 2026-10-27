@@ -25,20 +25,19 @@ If you installed the tool with `python3 -m pip install .`, you can instead run `
 If you are using Docker to run the tool then the command would instead be `docker run -it  -v "$PWD":/usr/src/app tp <options>`
 
 ```text
-usage: tp.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH]
-                   [--min_region_positional_depth MIN_REGION_POSITIONAL_DEPTH] [--candidate_offset_len CANDIDATE_OFFSET_LEN]
-                   [--depth_delta_threshold DEPTH_DELTA_THRESHOLD] [--assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD]
-                   [-o OUTPUT_PREFIX] [--candidates_only] [-v]
+usage: tp.py [-h] -r READS_BED -d RANGES_BED [-c CHROMOSOME] [--min_depth MIN_DEPTH] [--max_depth MAX_DEPTH] [--min_region_positional_depth MIN_REGION_POSITIONAL_DEPTH]
+             [--candidate_offset_len CANDIDATE_OFFSET_LEN] [--depth_delta_threshold DEPTH_DELTA_THRESHOLD] [--candidate_read_threshold CANDIDATE_READ_THRESHOLD]
+             [--assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD] [-o OUTPUT_PREFIX] [--candidates_only] [-v] [--version]
 
 Predict transcripts based on a finding candidate start/stop sites, and filter alternative transcripts that could make use of various start/stop combinations.
 
 options:
   -h, --help            show this help message and exit
-  -r READS_BED, --reads_bed READS_BED
+  -r, --reads_bed READS_BED
                         (Required) Path to a position-sorted BED file of reads.
-  -d RANGES_BED, --ranges_bed RANGES_BED
+  -d, --ranges_bed RANGES_BED
                         (Required) Path to a BED file of distict non-overlapping interval ranges per strand
-  -c CHROMOSOME, --chromosome CHROMOSOME
+  -c, --chromosome CHROMOSOME
                         (Optional) Specific check on a chromsome ID. If not provided, will loop over all chromosomes
   --min_depth MIN_DEPTH
                         (Optional) Minimum required depth for a distinct region to find candidate transcripts. Default: 1
@@ -55,16 +54,16 @@ options:
   --candidate_read_threshold CANDIDATE_READ_THRESHOLD
                         (Optional) If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript. Default: 2
   --assigned_read_ratio_threshold ASSIGNED_READ_RATIO_THRESHOLD
-                        (Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio.
-                        Default: 0.2
-  -o OUTPUT_PREFIX, --output_prefix OUTPUT_PREFIX
+                        (Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this
+                        ratio. Default: 0.2
+  -o, --output_prefix OUTPUT_PREFIX
                         (Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: all_transcripts
   --candidates_only     (Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only
   -v, --verbose         (Optional) If enabled, print detailed step progress.
+  --version             show program's version number and exit
 
 --reads_bed file uses the first 6 standard BED columns (chr, start, end, name, score, strand)
 --ranges_bed uses the first 4 standard BED columns (chr, start, end, strand)
 
 The first output file ('.candidates.bed') is a 6-column BED file of all candidate transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand).The second output file is a 6-column BED file of all predicted transcripts for each chromsome that passed our linear model fitting and prediction cutoffs. The columns are the same as the first file.The third output file is a 9-column GFF3 file of the same contents from the second BED file. The 'score' column is the normalized score from predicting the best transcripts for a region.
-
 ```
