@@ -5,13 +5,13 @@
 Predict transcripts based on a finding candidate start/stop sites,
 and filter alternative transcripts that could make use of various start/stop combinations
 
-Version 1.0.4
+Version 1.0.5
 
 Shaun Adkins - sadkins@som.umaryland.edu
 
 """
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 import argparse, sys
 from pathlib import Path
@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--depth_delta_threshold", type=int, default=4, help="(Optional) If the absolute change of depth between two consecutive positions exceeds this number, consider this a potential start or stop site. Default: %(default)s")
     parser.add_argument("--candidate_read_threshold", type=int, default=2, help="(Optional) If the number of reads overlapping within a candidate transcript is below this threshold, throw out the transcript. Default: %(default)s")
     parser.add_argument("--assigned_read_ratio_threshold", type=float, default=0.2, help="(Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this ratio. Default: %(default)s")
-    parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="(Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: %(default)s")
+    parser.add_argument('-o', "--output_prefix", type=str, default="all_transcripts", required=False, help="(Optional) Prefix of the output files to save results to. The script will append .candidates.bed, .bed and .gff3 to the filenames. Default: %(default)s")
     parser.add_argument("--candidates_only", action="store_true", help="(Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only")
     parser.add_argument("-v", "--verbose", action="store_true", help="(Optional) If enabled, print detailed step progress.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -57,7 +57,7 @@ def main():
 
     if args.min_depth < 0:
         sys.exit("--min_depth cannot be less than 0. Exiting")
-    if args.max_depth and args.max_depth < 1:
+    if args.max_depth is not None and args.max_depth < 1:
         sys.exit("--max_depth cannot be less than 1. Exiting")
     if args.depth_delta_threshold < 0:
         sys.exit("--depth_delta_threshold cannot be less than 0. Exiting")
@@ -70,16 +70,16 @@ def main():
     if not Path(distinct_ranges).is_file():
         sys.exit(f"File does not exist for --ranges_bed={distinct_ranges}. Exiting")
     dr_cols = ["chr","start","end", "strand"]
-    distinct_ranges_df = pd.read_csv(distinct_ranges, sep="\t", header=None, names=dr_cols, usecols=[0,1,2,3])
+    distinct_ranges_df = read_bed(distinct_ranges, dr_cols, [0,1,2,3])
     # Sorting is not necessary for this output
     distinct_ranges_df = distinct_ranges_df.sort_values(by=["chr", "strand", "start"]).reset_index(drop=True)
     distinct_ranges_df["region"] = distinct_ranges_df.index
 
     reads_file = args.reads_bed
     if not Path(reads_file).is_file():
-        sys.exit(f"File does not exist for --reads_bed={distinct_ranges}. Exiting")
+        sys.exit(f"File does not exist for --reads_bed={reads_file}. Exiting")
     reads_cols = ["chr","start","end","name","score","strand"]
-    reads_df = pd.read_csv(reads_file,  sep="\t", header=None, names=reads_cols, usecols=[0,1,2,3,4,5])
+    reads_df = read_bed(reads_file, reads_cols, [0,1,2,3,4,5])
     reads_df = reads_df.sort_values(by=["chr", "strand", "start"]).reset_index(drop=True)
 
     transcript_df = pd.DataFrame(columns=BED_OUTPUT_COLS)
@@ -89,30 +89,29 @@ def main():
     # Process each usable region
     read_ranges_grouped = distinct_ranges_df.groupby(["chr", "region"], sort=False)
     for name, subread_ranges_df in read_ranges_grouped:
-        subread_ranges_s = subread_ranges_df.squeeze()
-
-        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
-
         # Quick isolation of a single chromosome or region interval
         if args.chromosome and not name[0] == args.chromosome:
             continue
 
-        # Filter only the reads that belong to this region.
         if len(subread_ranges_df) > 1:
-            raise f"Found multiple entries for chr {name[0]} and region {name[1]}. Exiting."
+            sys.exit(f"Found multiple entries for chr {name[0]} and region {name[1]}. Exiting.")
+
+        # Filter only the reads that belong to this region.
+        subread_ranges_s = subread_ranges_df.squeeze()
+        subreads_df = assign_reads_to_region(subread_ranges_s, reads_df).copy()
 
         if len(subreads_df) < args.min_depth:
-            print(f"Skipping region {name} because depth is under the min threshold of {args.min_depth}.")
+            print(f"Skipping region {name[1]} on {name[0]} because depth is under the min threshold of {args.min_depth}.")
             continue
 
         # Get ranges with valid depth (filter out ribosomes with high depth)
         if args.max_depth and len(subreads_df) > args.max_depth:
-            print(f"Skipping region {name} because depth is over the max threshold of {args.max_depth}")
+            print(f"Skipping region {name[1]} on {name[0]} because depth is over the max threshold of {args.max_depth}")
             continue
 
         subreads_df["region"] = name[1]
         if args.verbose:
-            print(f"REGION {name}")
+            print(f"REGION {name[1]} on {name[0]}")
 
         region_transcript_df, region_annotation_df, region_candidate_df = predict_region(subreads_df, args.min_region_positional_depth, args.candidate_offset_len, args.depth_delta_threshold, args.candidate_read_threshold, args.assigned_read_ratio_threshold, args.candidates_only, args.verbose)
         transcript_df = pd.concat([transcript_df, region_transcript_df], ignore_index=True)
@@ -133,6 +132,20 @@ def main():
         prepend_gff_version(f"{output_prefix}.gff3")
 
     exit()
+
+def read_bed(filename, names, usecols):
+    """Read a BED file, skipping any leading header lines (comments, 'track' or 'browser' lines)."""
+    header_lines = 0
+    with open(filename) as f:
+        for line in f:
+            if line.startswith(("#", "track", "browser")) or not line.strip():
+                header_lines += 1
+                continue
+            break
+        else:
+            sys.exit(f"No data lines found in {filename}. Exiting")
+    # Read chromosome IDs as strings so numeric IDs (i.e. "1") can match --chromosome
+    return pd.read_csv(filename, sep="\t", header=None, names=names, usecols=usecols, skiprows=header_lines, dtype={"chr": str})
 
 def prepend_gff_version(filename):
     """Prepend GFF3 version tag."""

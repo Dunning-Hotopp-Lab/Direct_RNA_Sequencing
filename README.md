@@ -57,7 +57,7 @@ options:
                         (Optional) The ratio of reads assigned solely to a candidate transcript to all reads overlapping within the same transcript. Keep transcripts that exceed this
                         ratio. Default: 0.2
   -o, --output_prefix OUTPUT_PREFIX
-                        (Optional) Prefix of the output files to save results to. The script will append .bed and .gff3 to the filenames. Default: all_transcripts
+                        (Optional) Prefix of the output files to save results to. The script will append .candidates.bed, .bed and .gff3 to the filenames. Default: all_transcripts
   --candidates_only     (Optional) If enabled, skip the candidate transcript-filtering step and print out the candidate transcripts only
   -v, --verbose         (Optional) If enabled, print detailed step progress.
   --version             show program's version number and exit
@@ -67,3 +67,17 @@ options:
 
 The first output file ('.candidates.bed') is a 6-column BED file of all candidate transcripts for each chromsome. The 6 columns are (chr, start, end, name, score, strand).The second output file is a 6-column BED file of all predicted transcripts for each chromsome that passed our linear model fitting and prediction cutoffs. The columns are the same as the first file.The third output file is a 9-column GFF3 file of the same contents from the second BED file. The 'score' column is the normalized score from predicting the best transcripts for a region.
 ```
+
+### Testing
+
+A small test dataset (reads and ranges from the *E. coli* E2348/69 plasmids) is in `test-data/`, along with expected outputs. See `test-data/README.md` for how it was generated.
+
+To run the regression tests, install `pytest` and run `python3 -m pytest tests` from the repository root.
+
+### Citation
+
+If you use this tool, please cite:
+
+Mattick JSA, Bromley RE, Watson KJ, Adkins RS, Holt CI, Lebov JF, Sparklin BC, Tyson TS, Rasko DA, Dunning Hotopp JC. Deciphering transcript architectural complexity in bacteria and archaea. mBio. 2024. https://doi.org/10.1128/mbio.02359-24
+
+Commands used for the manuscript are available at https://github.com/jdhotopp/tp.py-Direct-RNA-Sequencing-Manuscript-

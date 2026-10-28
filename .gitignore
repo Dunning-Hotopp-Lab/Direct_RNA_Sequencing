@@ -10,8 +10,10 @@ operon_prediction.py
 *.jpeg
 .DS_Store
 Operon_setup.sh
+!test-data/**
 
 # Python build artifacts
 build/
 dist/
 *.egg-info/
+__pycache__/

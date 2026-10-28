@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## v1.0.5
 
 * Documenting the `drs-transcript-prediction` command in the README
 * Refreshing the README help text (adds `--version` and `--candidate_read_threshold` to the usage line)
+* Fixing `--chromosome` never matching when chromosome IDs are numeric (i.e. `1`)
+* Skipping leading header lines (`#`, `track`, `browser`) in input BED files instead of crashing
+* Exiting with an error message when an input BED file has no data lines
+* Fixing `--max_depth 0` not being rejected
+* Fixing the error raised when a region has multiple entries, and the wrong path in the missing `--reads_bed` message
+* Adding small test dataset (`test-data/`) and pytest regression tests (`tests/`)
 
 ## v1.0.4
 
