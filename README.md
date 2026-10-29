@@ -4,6 +4,8 @@
 
 Python 3.9 and later are supported. This was tested using Python 3.11.3
 
+This tool may appear under both `tp.py` (the script name) and `drs-transcript-prediction` (the executable name).
+
 ### Installation
 
 #### Route 1 - pip
